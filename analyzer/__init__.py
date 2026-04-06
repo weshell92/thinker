@@ -1,0 +1,1 @@
+# Thinker – Critical Thinking Analyzer
