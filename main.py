@@ -27,6 +27,7 @@ import config  # noqa: E402
 from analyzer.engine import ThinkerEngine  # noqa: E402
 from analyzer.models import AnalysisResult  # noqa: E402
 from analyzer.providers.openai_provider import OpenAIProvider, ProviderError  # noqa: E402
+from analyzer.providers.gemini_native_provider import GeminiNativeProvider  # noqa: E402
 from book.reader import (  # noqa: E402
     discover_books, load_book, extract_chapter_text,
     extract_chapter_images, is_scanned_pdf, Chapter,
@@ -88,6 +89,26 @@ def cached_is_scanned(pdf_path: str) -> bool:
     return is_scanned_pdf(pdf_path)
 
 
+def _make_provider(api_key: str, model: str, base_url: str, is_native_gemini: bool = False):
+    """Create the appropriate LLM provider instance.
+
+    When ``is_native_gemini`` is True, returns a :class:`GeminiNativeProvider`
+    that calls the Gemini REST API directly.  Otherwise returns an
+    :class:`OpenAIProvider` (works with all OpenAI-compatible endpoints).
+    """
+    if is_native_gemini:
+        return GeminiNativeProvider(
+            api_keys=api_key,
+            model=model,
+            base_url=base_url if base_url else "https://generativelanguage.googleapis.com",
+        )
+    return OpenAIProvider(
+        api_key=api_key,
+        model=model,
+        base_url=base_url if base_url else None,
+    )
+
+
 
 # ---------------------------------------------------------------------------
 # Display helpers
@@ -147,7 +168,7 @@ def render_result(result: AnalysisResult, lang: str) -> None:
 # Tab 1: Analysis
 # ---------------------------------------------------------------------------
 
-def page_analyze(lang: str, api_key: str, model: str, base_url: str, provider_name: str = "") -> None:
+def page_analyze(lang: str, api_key: str, model: str, base_url: str, provider_name: str = "", is_native_gemini: bool = False) -> None:
     """Render the critical-thinking analysis page."""
     db = get_db()
 
@@ -179,11 +200,7 @@ def page_analyze(lang: str, api_key: str, model: str, base_url: str, provider_na
             st.warning(t("error_no_text", lang))
             return
 
-        provider = OpenAIProvider(
-            api_key=api_key,
-            model=model,
-            base_url=base_url if base_url else None,
-        )
+        provider = _make_provider(api_key, model, base_url, is_native_gemini)
         engine = ThinkerEngine(provider)
 
         with st.spinner(t("analyzing", lang)):
@@ -198,6 +215,8 @@ def page_analyze(lang: str, api_key: str, model: str, base_url: str, provider_na
                     st.error(t("error_auth", lang))
                 elif "CONTEXT_TOO_LONG" in error_code:
                     st.error(t("error_context_too_long", lang))
+                elif "TIMEOUT" in error_code:
+                    st.warning(t("error_timeout", lang))
                 elif "RATE_LIMIT" in error_code:
                     st.warning(t("error_rate_limit", lang))
                     st.caption(f"🔍 Detail: `{error_code}`")
@@ -209,7 +228,8 @@ def page_analyze(lang: str, api_key: str, model: str, base_url: str, provider_na
                 return
 
         render_result(result, lang)
-        db.save_record(user_text.strip(), lang, result)
+        db.save_record(user_text.strip(), lang, result,
+                       provider_name=provider_name, model_name=model)
         st.toast(t("saved", lang))
 
 
@@ -339,7 +359,7 @@ My question: {question}
 Please answer based on your knowledge of this book."""
 
 
-def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: str = "") -> None:
+def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: str = "", is_native_gemini: bool = False) -> None:
     """Render the Book Q&A page."""
     st.header(t("qa_title", lang))
     st.caption(t("qa_subtitle", lang))
@@ -395,11 +415,7 @@ def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: s
             system_prompt = _QA_SYSTEM_PROMPT_ZH if lang == "zh" else _QA_SYSTEM_PROMPT_EN
             user_prompt = _build_qa_user_prompt(question.strip(), book_name.strip(), lang)
 
-            provider = OpenAIProvider(
-                api_key=api_key,
-                model=model,
-                base_url=base_url if base_url else None,
-            )
+            provider = _make_provider(api_key, model, base_url, is_native_gemini)
 
             try:
                 answer = provider.complete_text(system_prompt, user_prompt)
@@ -412,6 +428,8 @@ def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: s
                     st.error(t("error_auth", lang))
                 elif "CONTEXT_TOO_LONG" in error_code:
                     st.error(t("error_context_too_long", lang))
+                elif "TIMEOUT" in error_code:
+                    st.warning(t("error_timeout", lang))
                 elif "RATE_LIMIT" in error_code:
                     st.warning(t("error_rate_limit", lang))
                     st.caption(f"🔍 Detail: `{error_code}`")
@@ -431,7 +449,8 @@ def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: s
 
         # Persist to database
         db = get_db()
-        db.save_qa_record(book_name.strip(), question.strip(), answer, lang)
+        db.save_qa_record(book_name.strip(), question.strip(), answer, lang,
+                          provider_name=provider_name, model_name=model)
         st.toast(t("saved", lang))
 
     # Render history grouped by book (newest first)
@@ -449,6 +468,497 @@ def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: s
                     _do_tts(item["answer"], lang, btn_key=f"tts_qa_{_book}_{_idx}")
                     if _idx < len(_items) - 1:
                         st.divider()
+
+
+# ---------------------------------------------------------------------------
+# Tab 4: Free Chat
+# ---------------------------------------------------------------------------
+
+_CHAT_SYSTEM_PROMPT_ZH = """你是一位知识渊博且乐于助人的 AI 助手。
+请用清晰、准确、有条理的中文回答用户的任何问题。
+如果用户上传了文件，请结合文件内容进行回答。
+如果你不确定某个答案，请诚实说明。"""
+
+_CHAT_SYSTEM_PROMPT_EN = """You are a knowledgeable and helpful AI assistant.
+Answer the user's questions clearly, accurately, and in a well-structured manner.
+If the user uploads a file, incorporate the file content in your answer.
+If you are unsure about something, honestly say so."""
+
+# Supported file extensions for upload
+_CHAT_UPLOAD_TYPES = ["txt", "md", "csv", "json", "py", "pdf", "docx", "log", "xml", "html", "htm", "yaml", "yml", "toml", "ini", "cfg", "rst", "tex",
+                      "png", "jpg", "jpeg", "gif", "webp", "bmp"]
+
+_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+
+_CHAT_MAX_FILE_MB = 10  # maximum upload size in megabytes
+
+
+def _is_image_file(filename: str) -> bool:
+    """Return True if the filename has an image extension."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return ext in _IMAGE_EXTENSIONS
+
+
+def _encode_image_base64(uploaded_file) -> str:
+    """Return a base64-encoded data URI for an uploaded image."""
+    import base64
+    raw_bytes: bytes = uploaded_file.getvalue()
+    name: str = uploaded_file.name
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else "png"
+    mime_map = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp", "bmp": "bmp"}
+    mime_type = f"image/{mime_map.get(ext, 'png')}"
+    b64 = base64.b64encode(raw_bytes).decode("utf-8")
+    return f"data:{mime_type};base64,{b64}"
+
+
+def _extract_file_text(uploaded_file) -> str:
+    """Extract text content from an uploaded file.
+
+    Supports plain-text formats, PDF (via PyMuPDF) and DOCX (via python-docx).
+    Returns the extracted text string or raises ValueError on failure.
+    """
+    name: str = uploaded_file.name
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    raw_bytes: bytes = uploaded_file.getvalue()
+
+    # --- PDF ---
+    if ext == "pdf":
+        import fitz  # PyMuPDF
+        doc = fitz.open(stream=raw_bytes, filetype="pdf")
+        pages_text: list[str] = []
+        for page in doc:
+            page_text = page.get_text("text")
+            if page_text.strip():
+                pages_text.append(page_text)
+        doc.close()
+        return "\n\n".join(pages_text)
+
+    # --- DOCX ---
+    if ext == "docx":
+        import io
+        from docx import Document
+        doc = Document(io.BytesIO(raw_bytes))
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+
+    # --- Everything else: treat as plain text ---
+    for encoding in ("utf-8", "utf-8-sig", "gbk", "gb2312", "latin-1"):
+        try:
+            return raw_bytes.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    raise ValueError("Unable to decode file as text")
+
+
+def _human_file_size(n_bytes: int) -> str:
+    """Return a human-readable file size string."""
+    if n_bytes < 1024:
+        return f"{n_bytes} B"
+    elif n_bytes < 1024 * 1024:
+        return f"{n_bytes / 1024:.1f} KB"
+    else:
+        return f"{n_bytes / (1024 * 1024):.1f} MB"
+
+
+def page_chat(lang: str, api_key: str, model: str, base_url: str, provider_name: str = "", is_native_gemini: bool = False) -> None:
+    """Render the Free Chat page with multi-turn conversation."""
+    st.header(t("chat_title", lang))
+    st.caption(t("chat_subtitle", lang))
+
+    # ---- View a saved chat record ----
+    if st.session_state.get("view_chat_record_id") is not None:
+        db = get_db()
+        chat_rec = db.get_chat_record_by_id(st.session_state.view_chat_record_id)
+        if chat_rec:
+            st.markdown(f"**❓ {chat_rec.question}**")
+            st.markdown("---")
+            st.markdown(f"**{t('chat_answer_title', lang)}**")
+            st.markdown(chat_rec.answer)
+            _do_tts(chat_rec.answer, lang, btn_key="tts_chat_saved")
+            if st.button("↩️ Back / 返回", key="chat_back"):
+                st.session_state.view_chat_record_id = None
+                st.rerun()
+            return
+        else:
+            st.session_state.view_chat_record_id = None
+
+    # ---- File uploader ----
+    uploaded_file = st.file_uploader(
+        t("chat_upload_label", lang),
+        type=_CHAT_UPLOAD_TYPES,
+        help=t("chat_upload_help", lang),
+        key="chat_file_uploader",
+    )
+
+    # Process uploaded file
+    file_text: str | None = None
+    image_data_uri: str | None = None
+    if uploaded_file is not None:
+        file_size = len(uploaded_file.getvalue())
+        if file_size > _CHAT_MAX_FILE_MB * 1024 * 1024:
+            st.warning(t("chat_file_too_large", lang, max_size=str(_CHAT_MAX_FILE_MB)))
+        elif _is_image_file(uploaded_file.name):
+            # Image file – prepare for vision API
+            image_data_uri = _encode_image_base64(uploaded_file)
+            st.success(
+                t("chat_file_loaded", lang,
+                  name=uploaded_file.name,
+                  size=_human_file_size(file_size))
+            )
+            st.image(uploaded_file, caption=uploaded_file.name, width=300)
+        else:
+            try:
+                file_text = _extract_file_text(uploaded_file)
+                if not file_text or not file_text.strip():
+                    st.warning(t("chat_file_empty", lang))
+                    file_text = None
+                else:
+                    st.success(
+                        t("chat_file_loaded", lang,
+                          name=uploaded_file.name,
+                          size=_human_file_size(file_size))
+                    )
+            except Exception as exc:
+                st.error(t("chat_file_extract_error", lang, error=str(exc)))
+                file_text = None
+
+    # ---- Initialize conversation history ----
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+
+    # ---- Render existing conversation ----
+    for msg in st.session_state.chat_messages:
+        role_label = t("chat_you", lang) if msg["role"] == "user" else t("chat_ai", lang)
+        avatar = "🧑" if msg["role"] == "user" else "🤖"
+        with st.chat_message(msg["role"], avatar=avatar):
+            st.markdown(msg["display"] if "display" in msg else msg["content"])
+
+    # ---- Chat input ----
+    user_input = st.chat_input(t("chat_input_placeholder", lang))
+
+    if user_input:
+        if not api_key:
+            st.warning(t("error_no_key", lang))
+            return
+        if not user_input.strip():
+            st.warning(t("chat_no_question", lang))
+            return
+
+        # Build the actual content sent to LLM (may include file text or image)
+        display_text = user_input.strip()
+        content_for_llm = user_input.strip()
+        has_vision = False
+
+        if image_data_uri:
+            # Vision mode: build multimodal content block
+            has_vision = True
+            content_for_llm = [
+                {"type": "image_url", "image_url": {"url": image_data_uri}},
+                {"type": "text", "text": user_input.strip()},
+            ]
+            display_text = f"🖼️ *{uploaded_file.name}*\n\n{user_input.strip()}"
+        elif file_text:
+            file_prefix = t("chat_file_context_prefix", lang, name=uploaded_file.name)
+            content_for_llm = file_prefix + file_text + "\n\n---\n\n" + user_input.strip()
+            display_text = f"📎 *{uploaded_file.name}*\n\n{user_input.strip()}"
+
+        # Append user message (store both display and full content)
+        st.session_state.chat_messages.append({
+            "role": "user",
+            "content": content_for_llm,
+            "display": display_text,
+        })
+        with st.chat_message("user", avatar="🧑"):
+            st.markdown(display_text)
+
+        # Build messages for API call
+        system_prompt = _CHAT_SYSTEM_PROMPT_ZH if lang == "zh" else _CHAT_SYSTEM_PROMPT_EN
+        api_messages = [{"role": "system", "content": system_prompt}]
+        for m in st.session_state.chat_messages:
+            api_messages.append({"role": m["role"], "content": m["content"]})
+
+        provider = _make_provider(api_key, model, base_url, is_native_gemini)
+
+        with st.chat_message("assistant", avatar="🤖"):
+            with st.spinner(t("chat_thinking", lang)):
+                try:
+                    if has_vision:
+                        answer = provider.complete_chat_with_vision(api_messages)
+                    else:
+                        answer = provider.complete_chat(api_messages)
+                except ProviderError as exc:
+                    error_code = str(exc)
+                    if "QUOTA_EXCEEDED" in error_code:
+                        st.error(t("error_quota", lang, provider=provider_name))
+                    elif "AUTH_ERROR" in error_code:
+                        st.error(t("error_auth", lang))
+                    elif "CONTEXT_TOO_LONG" in error_code:
+                        st.error(t("error_context_too_long", lang))
+                    elif "TIMEOUT" in error_code:
+                        st.warning(t("error_timeout", lang))
+                    elif "RATE_LIMIT" in error_code:
+                        st.warning(t("error_rate_limit", lang))
+                    else:
+                        st.error(t("error_analysis", lang, error=error_code))
+                    return
+                except Exception as exc:
+                    st.error(t("error_analysis", lang, error=str(exc)))
+                    return
+
+            st.markdown(answer)
+
+        # Append assistant message
+        st.session_state.chat_messages.append({"role": "assistant", "content": answer})
+
+        # Persist to database
+        db = get_db()
+        db.save_chat_record(display_text, answer, lang,
+                            provider_name=provider_name, model_name=model)
+        st.toast(t("saved", lang))
+
+    # ---- Clear conversation button ----
+    if st.session_state.chat_messages:
+        if st.button(t("chat_clear_button", lang), key="chat_clear"):
+            st.session_state.chat_messages = []
+            st.toast(t("chat_cleared", lang))
+            st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Tab 5: Gateway Q&A
+# ---------------------------------------------------------------------------
+
+# Load expr.md documentation at module level (once)
+_EXPR_MD_PATH = os.path.join(_PROJECT_ROOT, "expr.md")
+_EXPR_MD_CONTENT: str = ""
+_EXPR_MD_CAUTION: str = ""
+if os.path.isfile(_EXPR_MD_PATH):
+    with open(_EXPR_MD_PATH, "r", encoding="utf-8") as _f:
+        _EXPR_MD_CONTENT = _f.read()
+    # Extract "函数使用注意说明" section
+    _caution_marker = "**函数使用注意说明**"
+    _caution_idx = _EXPR_MD_CONTENT.find(_caution_marker)
+    if _caution_idx != -1:
+        # Grab from the marker to the next major section heading (** or ###)
+        _caution_body = _EXPR_MD_CONTENT[_caution_idx + len(_caution_marker):]
+        # Find the end: next "**" bold heading or "###" section heading
+        for _end_marker in ("\n**", "\n###", "\n---"):
+            _end_idx = _caution_body.find(_end_marker)
+            if _end_idx != -1:
+                _caution_body = _caution_body[:_end_idx]
+                break
+        _EXPR_MD_CAUTION = _caution_body.strip()
+
+_GATEWAY_SYSTEM_PROMPT_ZH = """你是一位专业的网关表达式配置助手，精通 Aviator 表达式引擎及其在网关系统中的应用。
+
+以下是完整的 Aviator 表达式引擎文档，你必须严格依据这份文档来回答用户的问题：
+
+---
+{doc}
+---
+
+⚠️ 注意事项（函数使用注意说明）：
+{caution}
+
+规则：
+1. 只根据上述文档内容回答问题，不要编造文档中不存在的函数或功能。
+2. 回答时给出准确的函数名、参数说明和调用示例。
+3. 如果用户问的函数在文档中有多个版本（如 V2、V3），请说明区别。
+4. 使用清晰、有条理的中文回答。
+5. 如果文档中没有相关内容，请诚实说明。
+6. 特别注意"注意事项"中的说明，涉及相关函数时必须提醒用户注意。
+7. 在回答末尾用"📌 相关章节"列出涉及的文档章节编号。"""
+
+_GATEWAY_SYSTEM_PROMPT_EN = """You are a professional gateway expression configuration assistant, expert in the Aviator expression engine and its use in gateway systems.
+
+Below is the complete Aviator expression engine documentation. You must answer strictly based on this document:
+
+---
+{doc}
+---
+
+⚠️ Cautions (Function Usage Notes):
+{caution}
+
+Rules:
+1. Only answer based on the above documentation. Do not fabricate functions or features not in the document.
+2. Provide accurate function names, parameter descriptions, and call examples.
+3. If there are multiple versions of a function (e.g. V2, V3), explain the differences.
+4. Provide clear, well-structured answers.
+5. If the documentation does not cover the topic, honestly say so.
+6. Pay special attention to the "Cautions" section above; always warn users about relevant notes when applicable.
+7. End your answer with "📌 Related sections" listing the relevant documentation section numbers."""
+
+
+def page_gateway(lang: str, api_key: str, model: str, base_url: str, provider_name: str = "", is_native_gemini: bool = False) -> None:
+    """Render the Gateway Expression Q&A page with multi-turn conversation."""
+    st.header(t("gateway_title", lang))
+    st.caption(t("gateway_subtitle", lang))
+
+    if not _EXPR_MD_CONTENT:
+        st.warning("⚠️ expr.md not found in project root.")
+        return
+
+    # ---- View a saved gateway record ----
+    if st.session_state.get("view_gateway_qa_record_id") is not None:
+        db = get_db()
+        gw_rec = db.get_gateway_qa_record_by_id(st.session_state.view_gateway_qa_record_id)
+        if gw_rec:
+            st.markdown(f"**❓ {gw_rec.question}**")
+            st.markdown("---")
+            st.markdown(f"**{t('gateway_answer_title', lang)}**")
+            st.markdown(gw_rec.answer)
+            st.caption(t("gateway_context_note", lang))
+            if gw_rec.provider_name or gw_rec.model_name:
+                st.caption(t("history_provider_model", lang,
+                             provider=gw_rec.provider_name, model=gw_rec.model_name))
+            _do_tts(gw_rec.answer, lang, btn_key="tts_gw_saved")
+            if st.button("↩️ Back / 返回", key="gw_back"):
+                st.session_state.view_gateway_qa_record_id = None
+                st.rerun()
+            return
+        else:
+            st.session_state.view_gateway_qa_record_id = None
+
+    # ---- File / Image uploader ----
+    gw_uploaded_file = st.file_uploader(
+        t("gateway_upload_label", lang),
+        type=_CHAT_UPLOAD_TYPES,
+        help=t("gateway_upload_help", lang),
+        key="gateway_file_uploader",
+    )
+
+    # Process uploaded file
+    gw_file_text: str | None = None
+    gw_image_data_uri: str | None = None
+    if gw_uploaded_file is not None:
+        gw_file_size = len(gw_uploaded_file.getvalue())
+        if gw_file_size > _CHAT_MAX_FILE_MB * 1024 * 1024:
+            st.warning(t("chat_file_too_large", lang, max_size=str(_CHAT_MAX_FILE_MB)))
+        elif _is_image_file(gw_uploaded_file.name):
+            gw_image_data_uri = _encode_image_base64(gw_uploaded_file)
+            st.success(
+                t("chat_file_loaded", lang,
+                  name=gw_uploaded_file.name,
+                  size=_human_file_size(gw_file_size))
+            )
+            st.image(gw_uploaded_file, caption=gw_uploaded_file.name, width=300)
+        else:
+            try:
+                gw_file_text = _extract_file_text(gw_uploaded_file)
+                if not gw_file_text or not gw_file_text.strip():
+                    st.warning(t("chat_file_empty", lang))
+                    gw_file_text = None
+                else:
+                    st.success(
+                        t("chat_file_loaded", lang,
+                          name=gw_uploaded_file.name,
+                          size=_human_file_size(gw_file_size))
+                    )
+            except Exception as exc:
+                st.error(t("chat_file_extract_error", lang, error=str(exc)))
+                gw_file_text = None
+
+    # ---- Initialize conversation history ----
+    if "gateway_messages" not in st.session_state:
+        st.session_state.gateway_messages = []
+
+    # ---- Render existing conversation ----
+    for msg in st.session_state.gateway_messages:
+        avatar = "🧑" if msg["role"] == "user" else "🤖"
+        with st.chat_message(msg["role"], avatar=avatar):
+            st.markdown(msg["display"] if "display" in msg else msg["content"])
+
+    # ---- Chat input ----
+    user_input = st.chat_input(t("gateway_input_placeholder", lang))
+
+    if user_input:
+        if not api_key:
+            st.warning(t("error_no_key", lang))
+            return
+        if not user_input.strip():
+            st.warning(t("gateway_no_question", lang))
+            return
+
+        # Build the actual content sent to LLM (may include file text or image)
+        display_text = user_input.strip()
+        content_for_llm = user_input.strip()
+        gw_has_vision = False
+
+        if gw_image_data_uri:
+            gw_has_vision = True
+            content_for_llm = [
+                {"type": "image_url", "image_url": {"url": gw_image_data_uri}},
+                {"type": "text", "text": user_input.strip()},
+            ]
+            display_text = f"🖼️ *{gw_uploaded_file.name}*\n\n{user_input.strip()}"
+        elif gw_file_text:
+            file_prefix = t("chat_file_context_prefix", lang, name=gw_uploaded_file.name)
+            content_for_llm = file_prefix + gw_file_text + "\n\n---\n\n" + user_input.strip()
+            display_text = f"📎 *{gw_uploaded_file.name}*\n\n{user_input.strip()}"
+
+        # Append user message
+        st.session_state.gateway_messages.append({
+            "role": "user",
+            "content": content_for_llm,
+            "display": display_text,
+        })
+        with st.chat_message("user", avatar="🧑"):
+            st.markdown(display_text)
+
+        # Build messages for API call
+        system_tmpl = _GATEWAY_SYSTEM_PROMPT_ZH if lang == "zh" else _GATEWAY_SYSTEM_PROMPT_EN
+        system_prompt = system_tmpl.format(doc=_EXPR_MD_CONTENT, caution=_EXPR_MD_CAUTION or "无")
+        api_messages = [{"role": "system", "content": system_prompt}]
+        for m in st.session_state.gateway_messages:
+            api_messages.append({"role": m["role"], "content": m["content"]})
+
+        provider = _make_provider(api_key, model, base_url, is_native_gemini)
+
+        with st.chat_message("assistant", avatar="🤖"):
+            with st.spinner(t("gateway_thinking", lang)):
+                try:
+                    if gw_has_vision:
+                        answer = provider.complete_chat_with_vision(api_messages)
+                    else:
+                        answer = provider.complete_chat(api_messages)
+                except ProviderError as exc:
+                    error_code = str(exc)
+                    if "QUOTA_EXCEEDED" in error_code:
+                        st.error(t("error_quota", lang, provider=provider_name))
+                    elif "AUTH_ERROR" in error_code:
+                        st.error(t("error_auth", lang))
+                    elif "CONTEXT_TOO_LONG" in error_code:
+                        st.error(t("error_context_too_long", lang))
+                    elif "TIMEOUT" in error_code:
+                        st.warning(t("error_timeout", lang))
+                    elif "RATE_LIMIT" in error_code:
+                        st.warning(t("error_rate_limit", lang))
+                    else:
+                        st.error(t("error_analysis", lang, error=error_code))
+                    return
+                except Exception as exc:
+                    st.error(t("error_analysis", lang, error=str(exc)))
+                    return
+
+            st.markdown(answer)
+
+        # Append assistant message
+        st.session_state.gateway_messages.append({"role": "assistant", "content": answer})
+
+        # Persist to database
+        db = get_db()
+        db.save_gateway_qa_record(
+            display_text, answer, lang,
+            provider_name=provider_name, model_name=model,
+        )
+        st.toast(t("saved", lang))
+
+    # ---- Clear conversation button ----
+    if st.session_state.gateway_messages:
+        if st.button(t("gateway_clear_button", lang), key="gw_clear"):
+            st.session_state.gateway_messages = []
+            st.toast(t("gateway_cleared", lang))
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +1004,7 @@ def _do_tts(text: str, lang: str, btn_key: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tab 4: Text-to-Speech (standalone input)
+# Tab 6: Text-to-Speech (standalone input)
 # ---------------------------------------------------------------------------
 
 def page_tts(lang: str) -> None:
@@ -552,6 +1062,10 @@ def main() -> None:
         st.session_state.view_record_id = None
     if "view_qa_record_id" not in st.session_state:
         st.session_state.view_qa_record_id = None
+    if "view_chat_record_id" not in st.session_state:
+        st.session_state.view_chat_record_id = None
+    if "view_gateway_qa_record_id" not in st.session_state:
+        st.session_state.view_gateway_qa_record_id = None
 
     # =================================================================
     # Sidebar
@@ -570,12 +1084,47 @@ def main() -> None:
 
         # ---- Provider presets ----
         _PRESETS = {
-            "OpenAI": {"base_url": "", "model": "gpt-4o"},
-            "DeepSeek": {"base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat"},
-            "Zhipu (智谱)": {"base_url": "https://open.bigmodel.cn/api/paas/v4", "model": "glm-4-flash"},
-            "Google Gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai", "model": "gemini-2.5-flash"},
-            "Ollama (local)": {"base_url": "http://localhost:11434/v1", "model": "llama3"},
-            t("custom_provider", lang): {"base_url": "", "model": ""},
+            "OpenAI": {
+                "base_url": "",
+                "models": ["gpt-5.4","gpt-5.3","gpt-5.2","gpt-5.1","gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
+            },
+            "DeepSeek": {
+                "base_url": "https://api.deepseek.com/v1",
+                "models": ["deepseek-chat", "deepseek-reasoner"],
+            },
+            "Zhipu (智谱)": {
+                "base_url": "https://open.bigmodel.cn/api/paas/v4",
+                "models": ["glm-4-flash", "GLM-4-Plus", "GLM-4", "GLM-4-Air", "GLM-4-Long", "GLM-4-FlashX", "GLM-4-AirX"],
+            },
+            "Google Gemini": {
+                "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                "models": ["gemini-3.1-pro-preview","gemini-3-flash-preview","gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"],
+            },
+            "Gemini中转 (Native)": {
+                "base_url": "https://gemini-balance-lite-dxsq9gzm0cf3.weshell92.deno.net",
+                "models": ["gemini-3-flash-preview","gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash"],
+                "native_gemini": True,
+            },
+            "Kimi (月之暗面)": {
+                "base_url": "https://api.moonshot.cn/v1",
+                "models": ["kimi-k2.5","kimi-k2-thinking","kimi-k2-0905","kimi-k2", "moonshot-v1-128k", "moonshot-v1-32k", "moonshot-v1-8k"],
+            },
+            "Qwen (通义千问)": {
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "models": ["qwen3.6-plus","qwen-max", "qwen-plus", "qwen-turbo", "qwen-long", "qwen-vl-max", "qwen-vl-plus", "qwen3-235b-a22b", "qwen3-32b", "qwen3-14b", "qwen3-8b", "qwen2.5-72b-instruct", "qwen2.5-32b-instruct"],
+            },
+            "Groq": {
+                "base_url": "https://api.groq.com/openai/v1",
+                "models": ["mixtral-8x7b-32768","llama3-70b-8192", "openai/gpt-oss-120b","llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview", "gemma2-9b-it", "qwen-qwq-32b"],
+            },
+            "Ollama (local)": {
+                "base_url": "http://localhost:11434/v1",
+                "models": ["llama3", "llama3.1", "llama3.2", "qwen2.5", "deepseek-r1", "mistral", "phi3"],
+            },
+            t("custom_provider", lang): {
+                "base_url": "",
+                "models": [],
+            },
         }
         _PRESET_NAMES = list(_PRESETS.keys())
 
@@ -599,7 +1148,6 @@ def main() -> None:
             saved_key = db.get_setting(f"apikey:{preset}", default="")
             # Directly set widget session-state keys so they render with new values
             st.session_state["sidebar_api_key"] = saved_key or config.OPENAI_API_KEY
-            st.session_state["sidebar_model"] = preset_cfg["model"] or config.OPENAI_MODEL
             st.session_state["sidebar_base_url"] = preset_cfg["base_url"] or config.OPENAI_BASE_URL or ""
             st.rerun()
 
@@ -622,11 +1170,22 @@ def main() -> None:
         if api_key and api_key != _saved_key:
             db.set_setting(f"apikey:{preset}", api_key)
 
-        model = st.text_input(
-            t("model_label", lang),
-            value=preset_cfg["model"] or config.OPENAI_MODEL,
-            key="sidebar_model",
-        )
+        # Model selector: selectbox for presets, text_input for custom
+        _preset_models = preset_cfg["models"]
+        if _preset_models:
+            model = st.selectbox(
+                t("model_select_label", lang),
+                options=_preset_models,
+                index=0,
+                key="sidebar_model",
+            )
+        else:
+            model = st.text_input(
+                t("model_select_label", lang),
+                value=config.OPENAI_MODEL,
+                key="sidebar_model_custom",
+            )
+
         base_url = st.text_input(
             t("base_url_label", lang),
             value=preset_cfg["base_url"] or config.OPENAI_BASE_URL or "",
@@ -690,7 +1249,8 @@ def main() -> None:
                     label = rec.input_text[:40] + ("…" if len(rec.input_text) > 40 else "")
                     col_btn, col_del = st.columns([4, 1])
                     with col_btn:
-                        if st.button(f"📄 {label}", key=f"view_{rec.id}"):
+                        _pm = f" [{rec.provider_name}/{rec.model_name}]" if rec.model_name else ""
+                        if st.button(f"📄 {label}{_pm}", key=f"view_{rec.id}"):
                             st.session_state.view_record_id = rec.id
                     with col_del:
                         if st.button("🗑️", key=f"del_{rec.id}"):
@@ -713,12 +1273,51 @@ def main() -> None:
                         qa_label = qa_rec.question[:35] + ("…" if len(qa_rec.question) > 35 else "")
                         col_qa_btn, col_qa_del = st.columns([4, 1])
                         with col_qa_btn:
-                            if st.button(f"💬 {qa_label}", key=f"view_qa_{qa_rec.id}"):
+                            _pm = f" [{qa_rec.provider_name}/{qa_rec.model_name}]" if qa_rec.model_name else ""
+                            if st.button(f"💬 {qa_label}{_pm}", key=f"view_qa_{qa_rec.id}"):
                                 st.session_state.view_qa_record_id = qa_rec.id
                         with col_qa_del:
                             if st.button("🗑️", key=f"del_qa_{qa_rec.id}"):
                                 db.delete_qa_record(qa_rec.id)  # type: ignore[arg-type]
                                 st.rerun()
+
+        # ---- Free Chat History ----
+        st.subheader(t("chat_history_title", lang))
+        chat_records = db.get_all_chat_records(limit=30)
+        if not chat_records:
+            st.caption(t("history_empty", lang))
+        else:
+            with st.expander(f"💬 {t('chat_history_title', lang)} ({len(chat_records)})", expanded=False):
+                for chat_rec in chat_records:
+                    chat_label = chat_rec.question[:35] + ("…" if len(chat_rec.question) > 35 else "")
+                    col_chat_btn, col_chat_del = st.columns([4, 1])
+                    with col_chat_btn:
+                        _pm = f" [{chat_rec.provider_name}/{chat_rec.model_name}]" if chat_rec.model_name else ""
+                        if st.button(f"💬 {chat_label}{_pm}", key=f"view_chat_{chat_rec.id}"):
+                            st.session_state.view_chat_record_id = chat_rec.id
+                    with col_chat_del:
+                        if st.button("🗑️", key=f"del_chat_{chat_rec.id}"):
+                            db.delete_chat_record(chat_rec.id)  # type: ignore[arg-type]
+                            st.rerun()
+
+        # ---- Gateway Q&A History ----
+        st.subheader(t("gateway_history_title", lang))
+        gw_records = db.get_all_gateway_qa_records(limit=30)
+        if not gw_records:
+            st.caption(t("history_empty", lang))
+        else:
+            with st.expander(f"🔌 {t('gateway_history_title', lang)} ({len(gw_records)})", expanded=False):
+                for gw_rec in gw_records:
+                    gw_label = gw_rec.question[:35] + ("…" if len(gw_rec.question) > 35 else "")
+                    col_gw_btn, col_gw_del = st.columns([4, 1])
+                    with col_gw_btn:
+                        _pm = f" [{gw_rec.provider_name}/{gw_rec.model_name}]" if gw_rec.model_name else ""
+                        if st.button(f"🔌 {gw_label}{_pm}", key=f"view_gw_{gw_rec.id}"):
+                            st.session_state.view_gateway_qa_record_id = gw_rec.id
+                    with col_gw_del:
+                        if st.button("🗑️", key=f"del_gw_{gw_rec.id}"):
+                            db.delete_gateway_qa_record(gw_rec.id)  # type: ignore[arg-type]
+                            st.rerun()
 
 
     # =================================================================
@@ -727,21 +1326,31 @@ def main() -> None:
     st.title(t("app_title", lang))
     st.caption(t("app_subtitle", lang))
 
-    tab_analyze, tab_read, tab_qa, tab_tts = st.tabs([
+    tab_analyze, tab_read, tab_qa, tab_gateway, tab_chat, tab_tts = st.tabs([
         t("tab_analyze", lang),
         t("tab_read", lang),
         t("tab_qa", lang),
+        t("tab_gateway", lang),
+        t("tab_chat", lang),
         t("tab_tts", lang),
     ])
 
+    _is_native_gemini = bool(preset_cfg.get("native_gemini"))
+
     with tab_analyze:
-        page_analyze(lang, api_key, model, base_url, provider_name=preset)
+        page_analyze(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
 
     with tab_read:
         page_read_book(lang)
 
     with tab_qa:
-        page_qa(lang, api_key, model, base_url, provider_name=preset)
+        page_qa(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
+
+    with tab_gateway:
+        page_gateway(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
+
+    with tab_chat:
+        page_chat(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
 
     with tab_tts:
         page_tts(lang)

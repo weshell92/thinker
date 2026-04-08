@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 
-from openai import OpenAI, APIStatusError, AuthenticationError, RateLimitError
+from openai import OpenAI, APIStatusError, APITimeoutError, AuthenticationError, RateLimitError
 
 from . import BaseProvider
 
@@ -38,12 +38,13 @@ class OpenAIProvider(BaseProvider):
         base_url: str | None = None,
         temperature: float = 0.4,
         max_tokens: int = 4096,
+        timeout: float = 300.0,
     ) -> None:
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
 
-        client_kwargs: dict = {"api_key": api_key}
+        client_kwargs: dict = {"api_key": api_key, "timeout": timeout}
         if base_url:
             client_kwargs["base_url"] = base_url
         self._client = OpenAI(**client_kwargs)
@@ -89,6 +90,16 @@ class OpenAIProvider(BaseProvider):
             try:
                 response = self._client.chat.completions.create(**kwargs)
                 return response.choices[0].message.content or ""
+
+            except APITimeoutError as exc:
+                logger.warning("Request timed out (attempt %d)", attempt + 1)
+                if attempt < self._RATE_LIMIT_MAX_RETRIES:
+                    time.sleep(self._RATE_LIMIT_BASE_DELAY)
+                    continue
+                raise ProviderError(
+                    "TIMEOUT: 请求超时，请稍后重试或更换模型。The API request timed out.",
+                    recoverable=True,
+                ) from exc
 
             except AuthenticationError as exc:
                 raise ProviderError("AUTH_ERROR", recoverable=False) from exc
@@ -143,8 +154,44 @@ class OpenAIProvider(BaseProvider):
                 if any(kw in exc_str for kw in _CTX_KEYWORDS_API):
                     raise ProviderError("CONTEXT_TOO_LONG", recoverable=False) from exc
 
+                # Handle unsupported parameter errors (e.g. max_tokens, response_format)
+                if exc.status_code == 400:
+                    _unsupported_param = (
+                        "unsupported parameter" in exc_str
+                        or "is not supported" in exc_str
+                        or "not supported" in exc_str
+                        or "invalid parameter" in exc_str
+                        or "response_format" in exc_str
+                        or "json_object" in exc_str
+                        or "json mode" in exc_str
+                    )
+                    if _unsupported_param and not getattr(self, "_retried_without_unsupported", False):
+                        self._retried_without_unsupported = True
+                        logger.warning("Retrying without unsupported params: %s", exc_str[:200])
+                        # Retry: swap max_tokens → max_completion_tokens, drop response_format
+                        if "max_tokens" in kwargs:
+                            kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+                        kwargs.pop("response_format", None)
+                        try:
+                            response = self._client.chat.completions.create(**kwargs)
+                            return response.choices[0].message.content or ""
+                        except Exception:
+                            pass  # fall through to raise original error
+
+                # Extract readable detail for the user
+                _detail = ""
+                _body = getattr(exc, "body", None)
+                if isinstance(_body, dict):
+                    _err = _body.get("error", {})
+                    if isinstance(_err, dict):
+                        _detail = _err.get("message", "")
+                    else:
+                        _detail = str(_err)
+                if not _detail:
+                    _detail = exc_str[:300]
+
                 raise ProviderError(
-                    f"API_ERROR:{exc.status_code}",
+                    f"API_ERROR:{exc.status_code}: {_detail[:300]}",
                     recoverable=exc.status_code >= 500,
                 ) from exc
 
@@ -174,4 +221,18 @@ class OpenAIProvider(BaseProvider):
             ],
             use_json=False,
         )
+
+    # ------------------------------------------------------------------
+    def complete_chat(self, messages: list[dict]) -> str:
+        """Send a full multi-turn message list and return the assistant reply."""
+        return self._call_with_retry(messages=messages, use_json=False)
+
+    # ------------------------------------------------------------------
+    def complete_chat_with_vision(self, messages: list[dict]) -> str:
+        """Like complete_chat but allows messages with image_url content parts.
+
+        This is the same as complete_chat – the _call_with_retry method already
+        passes through structured content blocks. This alias exists for clarity.
+        """
+        return self._call_with_retry(messages=messages, use_json=False)
 

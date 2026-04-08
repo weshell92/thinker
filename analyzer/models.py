@@ -38,6 +38,8 @@ class AnalysisRecord(BaseModel):
     input_text: str = ""
     language: str = "zh"
     result: AnalysisResult | None = None
+    provider_name: str = ""
+    model_name: str = ""
     created_at: datetime = Field(default_factory=datetime.now)
 
 
@@ -49,5 +51,32 @@ class QARecord(BaseModel):
     question: str = ""
     answer: str = ""
     language: str = "zh"
+    provider_name: str = ""
+    model_name: str = ""
     created_at: datetime = Field(default_factory=datetime.now)
+
+
+class ChatRecord(BaseModel):
+    """A persisted free-chat record (maps to SQLite row)."""
+
+    id: int | None = None
+    question: str = ""
+    answer: str = ""
+    language: str = "zh"
+    provider_name: str = ""
+    model_name: str = ""
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class GatewayQARecord(BaseModel):
+    """A persisted gateway Q&A record (maps to SQLite row)."""
+
+    id: int | None = None
+    question: str = ""
+    answer: str = ""
+    language: str = "zh"
+    provider_name: str = ""
+    model_name: str = ""
+    created_at: datetime = Field(default_factory=datetime.now)
+
 

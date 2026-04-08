@@ -14,6 +14,7 @@
 - 🌐 支持**中文**和**英文**界面及分析输出
 - 📖 **原文阅读** — 内置 PDF 章节目录，点击即可查看对应章节内容（支持文字 PDF 和扫描版图片渲染）
 - 📝 **书本问答** — 基于书籍内容提问，AI 根据原文总结回答，并标注相关章节
+- 💬 **自由问答** — 向 AI 提出任何问题，支持多轮对话上下文，支持上传文件（TXT/PDF/DOCX/CSV/JSON/代码等）作为对话素材
 - 💾 所有分析历史自动保存到 **SQLite**，可随时回看和删除
 - 🔌 LLM Provider **抽象接口**，支持 OpenAI / DeepSeek / 智谱 GLM / Ollama 等
 
@@ -65,7 +66,7 @@ streamlit run main.py
 
 ```
 thinker/
-├── main.py                     # Streamlit 入口（3个Tab：分析/阅读/问答）
+├── main.py                     # Streamlit 入口（5个Tab：分析/阅读/问答/自由问答/朗读）
 ├── config.py                   # 配置项
 ├── requirements.txt
 ├── README.md
