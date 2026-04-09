@@ -1262,9 +1262,9 @@ def main() -> None:
 
         # ---- Tab Visibility Settings ----
         _ALL_TABS = {
-            "tab_analyze": t("tab_analyze", lang),
-            "tab_read": t("tab_read", lang),
-            "tab_qa": t("tab_qa", lang),
+            # "tab_analyze": t("tab_analyze", lang),
+            # "tab_read": t("tab_read", lang),
+            # "tab_qa": t("tab_qa", lang),
             "tab_gateway": t("tab_gateway", lang),
             "tab_chat": t("tab_chat", lang),
             "tab_tts": t("tab_tts", lang),
