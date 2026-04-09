@@ -535,8 +535,13 @@ def _extract_file_text(uploaded_file) -> str:
 
     # --- DOCX ---
     if ext == "docx":
-        import io
-        from docx import Document
+        try:
+            import io
+            from docx import Document
+        except ImportError:
+            raise ValueError(
+                "读取 DOCX 文件需要安装 python-docx，请运行：pip install python-docx"
+            )
         doc = Document(io.BytesIO(raw_bytes))
         return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
@@ -581,45 +586,39 @@ def page_chat(lang: str, api_key: str, model: str, base_url: str, provider_name:
         else:
             st.session_state.view_chat_record_id = None
 
-    # ---- File uploader ----
-    uploaded_file = st.file_uploader(
+    # ---- File uploader (multi-file) ----
+    uploaded_files = st.file_uploader(
         t("chat_upload_label", lang),
         type=_CHAT_UPLOAD_TYPES,
         help=t("chat_upload_help", lang),
         key="chat_file_uploader",
+        accept_multiple_files=True,
     )
 
-    # Process uploaded file
-    file_text: str | None = None
-    image_data_uri: str | None = None
-    if uploaded_file is not None:
+    # Process uploaded files
+    all_file_texts: list[str] = []
+    all_image_data_uris: list[tuple[str, str]] = []  # (filename, data_uri)
+    for uploaded_file in (uploaded_files or []):
         file_size = len(uploaded_file.getvalue())
         if file_size > _CHAT_MAX_FILE_MB * 1024 * 1024:
             st.warning(t("chat_file_too_large", lang, max_size=str(_CHAT_MAX_FILE_MB)))
-        elif _is_image_file(uploaded_file.name):
-            # Image file – prepare for vision API
-            image_data_uri = _encode_image_base64(uploaded_file)
-            st.success(
-                t("chat_file_loaded", lang,
-                  name=uploaded_file.name,
-                  size=_human_file_size(file_size))
-            )
+            continue
+        if _is_image_file(uploaded_file.name):
+            data_uri = _encode_image_base64(uploaded_file)
+            all_image_data_uris.append((uploaded_file.name, data_uri))
+            st.success(t("chat_file_loaded", lang, name=uploaded_file.name, size=_human_file_size(file_size)))
             st.image(uploaded_file, caption=uploaded_file.name, width=300)
         else:
             try:
-                file_text = _extract_file_text(uploaded_file)
-                if not file_text or not file_text.strip():
-                    st.warning(t("chat_file_empty", lang))
-                    file_text = None
+                text = _extract_file_text(uploaded_file)
+                if text and text.strip():
+                    file_prefix = t("chat_file_context_prefix", lang, name=uploaded_file.name)
+                    all_file_texts.append(file_prefix + text)
+                    st.success(t("chat_file_loaded", lang, name=uploaded_file.name, size=_human_file_size(file_size)))
                 else:
-                    st.success(
-                        t("chat_file_loaded", lang,
-                          name=uploaded_file.name,
-                          size=_human_file_size(file_size))
-                    )
+                    st.warning(t("chat_file_empty", lang))
             except Exception as exc:
                 st.error(t("chat_file_extract_error", lang, error=str(exc)))
-                file_text = None
 
     # ---- Initialize conversation history ----
     if "chat_messages" not in st.session_state:
@@ -648,18 +647,26 @@ def page_chat(lang: str, api_key: str, model: str, base_url: str, provider_name:
         content_for_llm = user_input.strip()
         has_vision = False
 
-        if image_data_uri:
-            # Vision mode: build multimodal content block
+        if all_image_data_uris:
+            # Vision mode: build multimodal content block with all images
             has_vision = True
-            content_for_llm = [
-                {"type": "image_url", "image_url": {"url": image_data_uri}},
-                {"type": "text", "text": user_input.strip()},
-            ]
-            display_text = f"🖼️ *{uploaded_file.name}*\n\n{user_input.strip()}"
-        elif file_text:
-            file_prefix = t("chat_file_context_prefix", lang, name=uploaded_file.name)
-            content_for_llm = file_prefix + file_text + "\n\n---\n\n" + user_input.strip()
-            display_text = f"📎 *{uploaded_file.name}*\n\n{user_input.strip()}"
+            parts: list[dict] = []
+            display_names: list[str] = []
+            for fname, data_uri in all_image_data_uris:
+                parts.append({"type": "image_url", "image_url": {"url": data_uri}})
+                display_names.append(fname)
+            # Also prepend text files if any
+            text_block = user_input.strip()
+            if all_file_texts:
+                text_block = "\n\n---\n\n".join(all_file_texts) + "\n\n---\n\n" + text_block
+            parts.append({"type": "text", "text": text_block})
+            content_for_llm = parts
+            display_text = "🖼️ *" + ", ".join(display_names) + "*\n\n" + user_input.strip()
+        elif all_file_texts:
+            combined = "\n\n---\n\n".join(all_file_texts) + "\n\n---\n\n" + user_input.strip()
+            content_for_llm = combined
+            fnames = ", ".join(f.name for f in uploaded_files if not _is_image_file(f.name))
+            display_text = f"📎 *{fnames}*\n\n{user_input.strip()}"
 
         # Append user message (store both display and full content)
         st.session_state.chat_messages.append({
@@ -819,44 +826,39 @@ def page_gateway(lang: str, api_key: str, model: str, base_url: str, provider_na
         else:
             st.session_state.view_gateway_qa_record_id = None
 
-    # ---- File / Image uploader ----
-    gw_uploaded_file = st.file_uploader(
+    # ---- File / Image uploader (multi-file) ----
+    gw_uploaded_files = st.file_uploader(
         t("gateway_upload_label", lang),
         type=_CHAT_UPLOAD_TYPES,
         help=t("gateway_upload_help", lang),
         key="gateway_file_uploader",
+        accept_multiple_files=True,
     )
 
-    # Process uploaded file
-    gw_file_text: str | None = None
-    gw_image_data_uri: str | None = None
-    if gw_uploaded_file is not None:
+    # Process uploaded files
+    gw_file_texts: list[str] = []
+    gw_image_data_uris: list[tuple[str, str]] = []  # (filename, data_uri)
+    for gw_uploaded_file in (gw_uploaded_files or []):
         gw_file_size = len(gw_uploaded_file.getvalue())
         if gw_file_size > _CHAT_MAX_FILE_MB * 1024 * 1024:
             st.warning(t("chat_file_too_large", lang, max_size=str(_CHAT_MAX_FILE_MB)))
-        elif _is_image_file(gw_uploaded_file.name):
-            gw_image_data_uri = _encode_image_base64(gw_uploaded_file)
-            st.success(
-                t("chat_file_loaded", lang,
-                  name=gw_uploaded_file.name,
-                  size=_human_file_size(gw_file_size))
-            )
+            continue
+        if _is_image_file(gw_uploaded_file.name):
+            data_uri = _encode_image_base64(gw_uploaded_file)
+            gw_image_data_uris.append((gw_uploaded_file.name, data_uri))
+            st.success(t("chat_file_loaded", lang, name=gw_uploaded_file.name, size=_human_file_size(gw_file_size)))
             st.image(gw_uploaded_file, caption=gw_uploaded_file.name, width=300)
         else:
             try:
-                gw_file_text = _extract_file_text(gw_uploaded_file)
-                if not gw_file_text or not gw_file_text.strip():
-                    st.warning(t("chat_file_empty", lang))
-                    gw_file_text = None
+                text = _extract_file_text(gw_uploaded_file)
+                if text and text.strip():
+                    file_prefix = t("chat_file_context_prefix", lang, name=gw_uploaded_file.name)
+                    gw_file_texts.append(file_prefix + text)
+                    st.success(t("chat_file_loaded", lang, name=gw_uploaded_file.name, size=_human_file_size(gw_file_size)))
                 else:
-                    st.success(
-                        t("chat_file_loaded", lang,
-                          name=gw_uploaded_file.name,
-                          size=_human_file_size(gw_file_size))
-                    )
+                    st.warning(t("chat_file_empty", lang))
             except Exception as exc:
                 st.error(t("chat_file_extract_error", lang, error=str(exc)))
-                gw_file_text = None
 
     # ---- Initialize conversation history ----
     if "gateway_messages" not in st.session_state:
@@ -884,17 +886,24 @@ def page_gateway(lang: str, api_key: str, model: str, base_url: str, provider_na
         content_for_llm = user_input.strip()
         gw_has_vision = False
 
-        if gw_image_data_uri:
+        if gw_image_data_uris:
             gw_has_vision = True
-            content_for_llm = [
-                {"type": "image_url", "image_url": {"url": gw_image_data_uri}},
-                {"type": "text", "text": user_input.strip()},
-            ]
-            display_text = f"🖼️ *{gw_uploaded_file.name}*\n\n{user_input.strip()}"
-        elif gw_file_text:
-            file_prefix = t("chat_file_context_prefix", lang, name=gw_uploaded_file.name)
-            content_for_llm = file_prefix + gw_file_text + "\n\n---\n\n" + user_input.strip()
-            display_text = f"📎 *{gw_uploaded_file.name}*\n\n{user_input.strip()}"
+            parts: list[dict] = []
+            display_names: list[str] = []
+            for fname, data_uri in gw_image_data_uris:
+                parts.append({"type": "image_url", "image_url": {"url": data_uri}})
+                display_names.append(fname)
+            text_block = user_input.strip()
+            if gw_file_texts:
+                text_block = "\n\n---\n\n".join(gw_file_texts) + "\n\n---\n\n" + text_block
+            parts.append({"type": "text", "text": text_block})
+            content_for_llm = parts
+            display_text = "🖼️ *" + ", ".join(display_names) + "*\n\n" + user_input.strip()
+        elif gw_file_texts:
+            combined = "\n\n---\n\n".join(gw_file_texts) + "\n\n---\n\n" + user_input.strip()
+            content_for_llm = combined
+            fnames = ", ".join(f.name for f in gw_uploaded_files if not _is_image_file(f.name))
+            display_text = f"📎 *{fnames}*\n\n{user_input.strip()}"
 
         # Append user message
         st.session_state.gateway_messages.append({
@@ -1098,11 +1107,11 @@ def main() -> None:
             },
             "Google Gemini": {
                 "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-                "models": ["gemini-3.1-pro-preview","gemini-3-flash-preview","gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"],
+                "models": ["gemini-pro-latest","gemini-flash-latest","gemini-3.1-pro-preview","gemini-3.1-flash-lite","gemini-3-flash-live","gemini-3-flash-preview", "gemini-2.5-pro","gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite",  "gemma-4-31b-it", "gemini-embedding-2-preview"],
             },
             "Gemini中转 (Native)": {
                 "base_url": "https://gemini-balance-lite-dxsq9gzm0cf3.weshell92.deno.net",
-                "models": ["gemini-3-flash-preview","gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro", "gemini-1.5-flash"],
+                "models": ["gemini-pro-latest","gemini-flash-latest","gemini-3.1-pro-preview","gemini-3.1-flash-lite","gemini-3-flash-live","gemini-3-flash-preview","gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro", "gemma-4-31b-it", "gemini-embedding-2-preview"],
                 "native_gemini": True,
             },
             "Kimi (月之暗面)": {
@@ -1149,6 +1158,14 @@ def main() -> None:
             # Directly set widget session-state keys so they render with new values
             st.session_state["sidebar_api_key"] = saved_key or config.OPENAI_API_KEY
             st.session_state["sidebar_base_url"] = preset_cfg["base_url"] or config.OPENAI_BASE_URL or ""
+            # Force model reset: set to first model of new provider (or clear)
+            new_models = preset_cfg["models"]
+            if new_models:
+                st.session_state["sidebar_model"] = new_models[0]
+            else:
+                # Custom provider – no preset models, remove selectbox state
+                st.session_state.pop("sidebar_model", None)
+            st.session_state["sidebar_model_override"] = ""
             st.rerun()
 
         preset_cfg = _PRESETS[preset]
@@ -1170,21 +1187,27 @@ def main() -> None:
         if api_key and api_key != _saved_key:
             db.set_setting(f"apikey:{preset}", api_key)
 
-        # Model selector: selectbox for presets, text_input for custom
+        # Model selector: selectbox for presets + text input for override/custom
         _preset_models = preset_cfg["models"]
         if _preset_models:
-            model = st.selectbox(
+            _selected_model = st.selectbox(
                 t("model_select_label", lang),
                 options=_preset_models,
                 index=0,
                 key="sidebar_model",
             )
         else:
-            model = st.text_input(
-                t("model_select_label", lang),
-                value=config.OPENAI_MODEL,
-                key="sidebar_model_custom",
-            )
+            _selected_model = ""
+
+        _model_override = st.text_input(
+            t("model_custom_input_label", lang),
+            value="",
+            help=t("model_custom_input_help", lang),
+            key="sidebar_model_override",
+        )
+
+        # Final model: override wins if non-empty, else selectbox, else config default
+        model = _model_override.strip() if _model_override.strip() else (_selected_model or config.OPENAI_MODEL)
 
         base_url = st.text_input(
             t("base_url_label", lang),
@@ -1234,6 +1257,27 @@ def main() -> None:
                 value=t("tts_rate_normal", lang),
                 key="tts_rate_slider",
             )
+
+        st.divider()
+
+        # ---- Tab Visibility Settings ----
+        _ALL_TABS = {
+            "tab_analyze": t("tab_analyze", lang),
+            "tab_read": t("tab_read", lang),
+            "tab_qa": t("tab_qa", lang),
+            "tab_gateway": t("tab_gateway", lang),
+            "tab_chat": t("tab_chat", lang),
+            "tab_tts": t("tab_tts", lang),
+        }
+        with st.expander(t("tab_visibility_label", lang), expanded=False):
+            st.caption(t("tab_visibility_help", lang))
+            _visible_tabs: list[str] = []
+            for _tab_key, _tab_label in _ALL_TABS.items():
+                _default_on = True
+                if st.checkbox(_tab_label, value=_default_on, key=f"_vis_{_tab_key}"):
+                    _visible_tabs.append(_tab_key)
+        # Store for later use in tab rendering
+        st.session_state["_visible_tabs"] = _visible_tabs if _visible_tabs else list(_ALL_TABS.keys())
 
         st.divider()
 
@@ -1321,39 +1365,53 @@ def main() -> None:
 
 
     # =================================================================
-    # Main area – Tabs
+    # Main area – Tabs (filtered by visibility settings)
     # =================================================================
     st.title(t("app_title", lang))
     st.caption(t("app_subtitle", lang))
 
-    tab_analyze, tab_read, tab_qa, tab_gateway, tab_chat, tab_tts = st.tabs([
-        t("tab_analyze", lang),
-        t("tab_read", lang),
-        t("tab_qa", lang),
-        t("tab_gateway", lang),
-        t("tab_chat", lang),
-        t("tab_tts", lang),
-    ])
-
     _is_native_gemini = bool(preset_cfg.get("native_gemini"))
+    _visible = st.session_state.get("_visible_tabs", ["tab_analyze", "tab_read", "tab_qa", "tab_gateway", "tab_chat", "tab_tts"])
 
-    with tab_analyze:
-        page_analyze(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
+    # Build tab labels and keys for visible tabs only
+    _TAB_REGISTRY = [
+        ("tab_analyze", t("tab_analyze", lang)),
+        ("tab_read", t("tab_read", lang)),
+        ("tab_qa", t("tab_qa", lang)),
+        ("tab_gateway", t("tab_gateway", lang)),
+        ("tab_chat", t("tab_chat", lang)),
+        ("tab_tts", t("tab_tts", lang)),
+    ]
+    _shown = [(k, lbl) for k, lbl in _TAB_REGISTRY if k in _visible]
+    if not _shown:
+        _shown = _TAB_REGISTRY  # fallback: show all
 
-    with tab_read:
-        page_read_book(lang)
+    _tab_objects = st.tabs([lbl for _, lbl in _shown])
+    _tab_map = {k: tab_obj for (k, _), tab_obj in zip(_shown, _tab_objects)}
 
-    with tab_qa:
-        page_qa(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
+    if "tab_analyze" in _tab_map:
+        with _tab_map["tab_analyze"]:
+            page_analyze(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
 
-    with tab_gateway:
-        page_gateway(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
+    if "tab_read" in _tab_map:
+        with _tab_map["tab_read"]:
+            page_read_book(lang)
 
-    with tab_chat:
-        page_chat(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
+    if "tab_qa" in _tab_map:
+        with _tab_map["tab_qa"]:
+            page_qa(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
 
-    with tab_tts:
-        page_tts(lang)
+    if "tab_gateway" in _tab_map:
+        with _tab_map["tab_gateway"]:
+            page_gateway(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
+
+    if "tab_chat" in _tab_map:
+        with _tab_map["tab_chat"]:
+            page_chat(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
+
+    if "tab_tts" in _tab_map:
+        with _tab_map["tab_tts"]:
+            page_tts(lang)
 
 
 if __name__ == "__main__":
