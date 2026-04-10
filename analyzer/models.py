@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Fallacy(BaseModel):
@@ -33,6 +33,7 @@ class AnalysisResult(BaseModel):
 
 class AnalysisRecord(BaseModel):
     """A persisted analysis record (maps to SQLite row)."""
+    model_config = ConfigDict(protected_namespaces=())
 
     id: int | None = None
     input_text: str = ""
@@ -45,6 +46,7 @@ class AnalysisRecord(BaseModel):
 
 class QARecord(BaseModel):
     """A persisted Q&A record (maps to SQLite row)."""
+    model_config = ConfigDict(protected_namespaces=())
 
     id: int | None = None
     book_name: str = ""
@@ -58,6 +60,7 @@ class QARecord(BaseModel):
 
 class ChatRecord(BaseModel):
     """A persisted free-chat record (maps to SQLite row)."""
+    model_config = ConfigDict(protected_namespaces=())
 
     id: int | None = None
     question: str = ""
@@ -70,6 +73,7 @@ class ChatRecord(BaseModel):
 
 class GatewayQARecord(BaseModel):
     """A persisted gateway Q&A record (maps to SQLite row)."""
+    model_config = ConfigDict(protected_namespaces=())
 
     id: int | None = None
     question: str = ""

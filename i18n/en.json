@@ -112,5 +112,11 @@
   "model_custom_input_help": "Leave empty to use the model selected above; if entered, it overrides the selection",
   "tab_visibility_label": "📑 Visible Tabs",
   "tab_visibility_help": "Check the tabs you want to show; unchecked tabs will be hidden",
-  "history_provider_model": "🔧 {provider} / {model}"
+  "history_provider_model": "🔧 {provider} / {model}",
+  "paste_image_button": "📋 Paste Screenshot",
+  "paste_image_loaded": "📋 Screenshot pasted (#{n})",
+  "paste_image_count": "📋 {n} screenshot(s) pasted",
+  "paste_image_delete": "🗑️ Delete",
+  "paste_image_clear_all": "🗑️ Clear All Screenshots",
+  "chat_input_hint": "Multi-line input supported; paste multiple screenshots as images"
 }

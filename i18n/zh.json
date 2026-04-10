@@ -112,5 +112,11 @@
   "model_custom_input_help": "留空则使用上方选择的模型，输入则覆盖选择",
   "tab_visibility_label": "📑 显示的功能页",
   "tab_visibility_help": "勾选要显示的功能页，取消勾选将隐藏对应章节",
-  "history_provider_model": "🔧 {provider} / {model}"
+  "history_provider_model": "🔧 {provider} / {model}",
+  "paste_image_button": "📋 粘贴截图",
+  "paste_image_loaded": "📋 已粘贴截图（第{n}张）",
+  "paste_image_count": "📋 已粘贴 {n} 张截图",
+  "paste_image_delete": "🗑️ 删除",
+  "paste_image_clear_all": "🗑️ 清空所有截图",
+  "chat_input_hint": "支持多行输入，可多次粘贴截图作为图片发送"
 }

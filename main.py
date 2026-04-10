@@ -511,6 +511,16 @@ def _encode_image_base64(uploaded_file) -> str:
     return f"data:{mime_type};base64,{b64}"
 
 
+def _encode_pil_image_base64(pil_image) -> str:
+    """Return a base64-encoded data URI for a PIL Image (e.g. from clipboard paste)."""
+    import base64
+    import io
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
+
+
 def _extract_file_text(uploaded_file) -> str:
     """Extract text content from an uploaded file.
 
@@ -631,10 +641,74 @@ def page_chat(lang: str, api_key: str, model: str, base_url: str, provider_name:
         with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["display"] if "display" in msg else msg["content"])
 
-    # ---- Chat input ----
-    user_input = st.chat_input(t("chat_input_placeholder", lang))
+    # ---- Chat input (multi-line + clipboard paste) ----
+    from streamlit_paste_button import paste_image_button as _paste_btn
 
-    if user_input:
+    user_input = st.text_area(
+        t("chat_input_placeholder", lang),
+        height=120,
+        key="chat_text_area",
+        placeholder=t("chat_input_placeholder", lang),
+    )
+    st.caption(t("chat_input_hint", lang))
+
+    # ---- Multi-image clipboard paste (accumulated in session state) ----
+    if "chat_pasted_images" not in st.session_state:
+        st.session_state.chat_pasted_images = []  # list of (name, data_uri)
+    if "chat_last_paste_hash" not in st.session_state:
+        st.session_state.chat_last_paste_hash = None
+
+    _paste_col, _send_col = st.columns([1, 1])
+    with _paste_col:
+        _paste_result = _paste_btn(
+            label=t("paste_image_button", lang),
+            key="chat_paste_image",
+        )
+    # When a new image is pasted, append it — but only if it's genuinely new
+    if _paste_result and _paste_result.image_data:
+        import hashlib as _hl
+        _pasted_data_uri = _encode_pil_image_base64(_paste_result.image_data)
+        _paste_hash = _hl.md5(_pasted_data_uri.encode()).hexdigest()
+        if _paste_hash != st.session_state.chat_last_paste_hash:
+            st.session_state.chat_last_paste_hash = _paste_hash
+            _n = len(st.session_state.chat_pasted_images) + 1
+            _paste_name = f"clipboard_paste_{_n}.png"
+            st.session_state.chat_pasted_images.append((_paste_name, _pasted_data_uri))
+            st.toast(t("paste_image_loaded", lang, n=str(_n)))
+
+    # Display all pasted images with delete buttons
+    if st.session_state.chat_pasted_images:
+        st.info(t("paste_image_count", lang, n=str(len(st.session_state.chat_pasted_images))))
+        _del_indices: list[int] = []
+        for _i, (_pname, _puri) in enumerate(st.session_state.chat_pasted_images):
+            _img_col, _del_col = st.columns([4, 1])
+            with _img_col:
+                # Decode base64 for display
+                import base64 as _b64
+                _raw = _b64.b64decode(_puri.split(",", 1)[1])
+                st.image(_raw, caption=_pname, width=200)
+            with _del_col:
+                if st.button(t("paste_image_delete", lang), key=f"chat_paste_del_{_i}"):
+                    _del_indices.append(_i)
+        if _del_indices:
+            st.session_state.chat_pasted_images = [
+                v for idx, v in enumerate(st.session_state.chat_pasted_images) if idx not in _del_indices
+            ]
+            st.rerun()
+        # Clear all button
+        if len(st.session_state.chat_pasted_images) > 1:
+            if st.button(t("paste_image_clear_all", lang), key="chat_paste_clear_all"):
+                st.session_state.chat_pasted_images = []
+                st.rerun()
+
+    # Merge pasted images into the image list for LLM
+    for _pname, _puri in st.session_state.chat_pasted_images:
+        all_image_data_uris.append((_pname, _puri))
+
+    with _send_col:
+        _chat_send_clicked = st.button(t("chat_send_button", lang), key="chat_send_btn", type="primary", use_container_width=True)
+
+    if _chat_send_clicked and user_input:
         if not api_key:
             st.warning(t("error_no_key", lang))
             return
@@ -721,6 +795,9 @@ def page_chat(lang: str, api_key: str, model: str, base_url: str, provider_name:
         db.save_chat_record(display_text, answer, lang,
                             provider_name=provider_name, model_name=model)
         st.toast(t("saved", lang))
+        # Clear pasted images after successful send
+        st.session_state.chat_pasted_images = []
+        st.session_state.chat_last_paste_hash = None
 
     # ---- Clear conversation button ----
     if st.session_state.chat_messages:
@@ -870,10 +947,73 @@ def page_gateway(lang: str, api_key: str, model: str, base_url: str, provider_na
         with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["display"] if "display" in msg else msg["content"])
 
-    # ---- Chat input ----
-    user_input = st.chat_input(t("gateway_input_placeholder", lang))
+    # ---- Chat input (multi-line + clipboard paste) ----
+    from streamlit_paste_button import paste_image_button as _paste_btn
 
-    if user_input:
+    user_input = st.text_area(
+        t("gateway_input_placeholder", lang),
+        height=120,
+        key="gateway_text_area",
+        placeholder=t("gateway_input_placeholder", lang),
+    )
+    st.caption(t("chat_input_hint", lang))
+
+    # ---- Multi-image clipboard paste (accumulated in session state) ----
+    if "gw_pasted_images" not in st.session_state:
+        st.session_state.gw_pasted_images = []  # list of (name, data_uri)
+    if "gw_last_paste_hash" not in st.session_state:
+        st.session_state.gw_last_paste_hash = None
+
+    _gw_paste_col, _gw_send_col = st.columns([1, 1])
+    with _gw_paste_col:
+        _gw_paste_result = _paste_btn(
+            label=t("paste_image_button", lang),
+            key="gateway_paste_image",
+        )
+    # When a new image is pasted, append it — but only if it's genuinely new
+    if _gw_paste_result and _gw_paste_result.image_data:
+        import hashlib as _hl
+        _gw_pasted_data_uri = _encode_pil_image_base64(_gw_paste_result.image_data)
+        _gw_paste_hash = _hl.md5(_gw_pasted_data_uri.encode()).hexdigest()
+        if _gw_paste_hash != st.session_state.gw_last_paste_hash:
+            st.session_state.gw_last_paste_hash = _gw_paste_hash
+            _gw_n = len(st.session_state.gw_pasted_images) + 1
+            _gw_paste_name = f"clipboard_paste_{_gw_n}.png"
+            st.session_state.gw_pasted_images.append((_gw_paste_name, _gw_pasted_data_uri))
+            st.toast(t("paste_image_loaded", lang, n=str(_gw_n)))
+
+    # Display all pasted images with delete buttons
+    if st.session_state.gw_pasted_images:
+        st.info(t("paste_image_count", lang, n=str(len(st.session_state.gw_pasted_images))))
+        _gw_del_indices: list[int] = []
+        for _gi, (_gpname, _gpuri) in enumerate(st.session_state.gw_pasted_images):
+            _gimg_col, _gdel_col = st.columns([4, 1])
+            with _gimg_col:
+                import base64 as _b64
+                _graw = _b64.b64decode(_gpuri.split(",", 1)[1])
+                st.image(_graw, caption=_gpname, width=200)
+            with _gdel_col:
+                if st.button(t("paste_image_delete", lang), key=f"gw_paste_del_{_gi}"):
+                    _gw_del_indices.append(_gi)
+        if _gw_del_indices:
+            st.session_state.gw_pasted_images = [
+                v for idx, v in enumerate(st.session_state.gw_pasted_images) if idx not in _gw_del_indices
+            ]
+            st.rerun()
+        # Clear all button
+        if len(st.session_state.gw_pasted_images) > 1:
+            if st.button(t("paste_image_clear_all", lang), key="gw_paste_clear_all"):
+                st.session_state.gw_pasted_images = []
+                st.rerun()
+
+    # Merge pasted images into the image list for LLM
+    for _gpname, _gpuri in st.session_state.gw_pasted_images:
+        gw_image_data_uris.append((_gpname, _gpuri))
+
+    with _gw_send_col:
+        _gw_send_clicked = st.button(t("gateway_ask_button", lang), key="gateway_send_btn", type="primary", use_container_width=True)
+
+    if _gw_send_clicked and user_input:
         if not api_key:
             st.warning(t("error_no_key", lang))
             return
@@ -961,6 +1101,9 @@ def page_gateway(lang: str, api_key: str, model: str, base_url: str, provider_na
             provider_name=provider_name, model_name=model,
         )
         st.toast(t("saved", lang))
+        # Clear pasted images after successful send
+        st.session_state.gw_pasted_images = []
+        st.session_state.gw_last_paste_hash = None
 
     # ---- Clear conversation button ----
     if st.session_state.gateway_messages:

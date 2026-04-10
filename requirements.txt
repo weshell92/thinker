@@ -6,3 +6,5 @@ PyMuPDF>=1.23.0
 edge-tts>=7.0.0
 python-docx>=1.0.0
 requests>=2.28.0
+Pillow>=10.0.0
+streamlit-paste-button>=0.1.0
