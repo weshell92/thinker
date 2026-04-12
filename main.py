@@ -33,7 +33,7 @@ from book.reader import (  # noqa: E402
     extract_chapter_images, is_scanned_pdf, Chapter,
 )
 from db.database import Database  # noqa: E402
-from tts.engine import get_voice_options, synthesize  # noqa: E402
+from tts.engine import get_voice_options, synthesize, synthesize_with_sample, get_sample_voices  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # i18n helper
@@ -1134,16 +1134,43 @@ def _get_tts_settings(lang: str) -> tuple[str, str]:
     return voice_id, rate
 
 
+def _get_fish_settings() -> tuple[bool, str, str | None]:
+    """Return (use_sample, fish_api_key, sample_path) from session state."""
+    use_sample = bool(st.session_state.get("tts_use_sample_voice", False))
+    fish_key = st.session_state.get("tts_fish_api_key", "") or config.FISH_AUDIO_API_KEY
+    sample_path = st.session_state.get("_tts_sample_path")
+    return use_sample, fish_key, sample_path
+
+
 def _do_tts(text: str, lang: str, btn_key: str) -> None:
     """Render a 🔊 read-aloud button for the given text. Plays inline."""
     if st.button(t("tts_read_this", lang), key=btn_key):
-        voice_id, rate = _get_tts_settings(lang)
-        with st.spinner(t("tts_generating", lang)):
-            try:
-                audio_bytes = synthesize(text, voice_id, rate)
-            except Exception as exc:
-                st.error(t("tts_error", lang, error=str(exc)))
+        use_sample, fish_key, sample_path = _get_fish_settings()
+
+        if use_sample:
+            # --- Fish Audio voice cloning path ---
+            if not fish_key:
+                st.warning(t("tts_sample_no_key", lang))
                 return
+            if not sample_path:
+                st.warning(t("tts_sample_no_files", lang))
+                return
+            with st.spinner(t("tts_generating_sample", lang)):
+                try:
+                    audio_bytes = synthesize_with_sample(text, sample_path, fish_key)
+                except Exception as exc:
+                    st.error(t("tts_error", lang, error=str(exc)))
+                    return
+        else:
+            # --- Standard edge-tts path ---
+            voice_id, rate = _get_tts_settings(lang)
+            with st.spinner(t("tts_generating", lang)):
+                try:
+                    audio_bytes = synthesize(text, voice_id, rate)
+                except Exception as exc:
+                    st.error(t("tts_error", lang, error=str(exc)))
+                    return
+
         if audio_bytes:
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button(
@@ -1164,6 +1191,9 @@ def page_tts(lang: str) -> None:
     st.header(t("tts_title", lang))
     st.caption(t("tts_subtitle", lang))
 
+    # ---- Subject input ----
+    tts_subject = st.text_input(t("主题", lang, default="主题/Subject (可选)"), key="tts_subject")
+
     # ---- Text input ----
     tts_text = st.text_area(
         t("tts_input_placeholder", lang),
@@ -1181,20 +1211,40 @@ def page_tts(lang: str) -> None:
             st.warning(t("tts_no_text", lang))
             return
 
-        voice_id, rate = _get_tts_settings(lang)
-        with st.spinner(t("tts_generating", lang)):
-            try:
-                audio_bytes = synthesize(tts_text.strip(), voice_id, rate)
-            except Exception as exc:
-                st.error(t("tts_error", lang, error=str(exc)))
+        use_sample, fish_key, sample_path = _get_fish_settings()
+
+        if use_sample:
+            # --- Fish Audio voice cloning path ---
+            if not fish_key:
+                st.warning(t("tts_sample_no_key", lang))
                 return
+            if not sample_path:
+                st.warning(t("tts_sample_no_files", lang))
+                return
+            with st.spinner(t("tts_generating_sample", lang)):
+                try:
+                    audio_bytes = synthesize_with_sample(tts_text.strip(), sample_path, fish_key)
+                except Exception as exc:
+                    st.error(t("tts_error", lang, error=str(exc)))
+                    return
+        else:
+            # --- Standard edge-tts path ---
+            voice_id, rate = _get_tts_settings(lang)
+            with st.spinner(t("tts_generating", lang)):
+                try:
+                    audio_bytes = synthesize(tts_text.strip(), voice_id, rate)
+                except Exception as exc:
+                    st.error(t("tts_error", lang, error=str(exc)))
+                    return
 
         if audio_bytes:
+            # Use subject as filename if provided, else default
+            file_name = f"{tts_subject.strip() if tts_subject.strip() else 'thinker_tts'}.mp3"
             st.audio(audio_bytes, format="audio/mp3")
             st.download_button(
                 label=t("tts_download", lang),
                 data=audio_bytes,
-                file_name="thinker_tts.mp3",
+                file_name=file_name,
                 mime="audio/mp3",
                 key="tts_main_dl",
             )
@@ -1400,6 +1450,41 @@ def main() -> None:
                 value=t("tts_rate_normal", lang),
                 key="tts_rate_slider",
             )
+
+            st.divider()
+
+            # ---- Fish Audio sample voice ----
+            st.checkbox(
+                t("tts_use_sample_voice", lang),
+                key="tts_use_sample_voice",
+                help=t("tts_sample_voice_help", lang),
+            )
+
+            if st.session_state.get("tts_use_sample_voice"):
+                # API Key input (pre-filled from config, saved to DB)
+                _fish_saved_key = db.get_setting("fish_audio_api_key", default=config.FISH_AUDIO_API_KEY)
+                _fish_key_input = st.text_input(
+                    t("tts_fish_api_key_label", lang),
+                    value=_fish_saved_key,
+                    type="password",
+                    help=t("tts_fish_api_key_help", lang),
+                    key="tts_fish_api_key",
+                )
+                if _fish_key_input and _fish_key_input != _fish_saved_key:
+                    db.set_setting("fish_audio_api_key", _fish_key_input)
+
+                # Sample voice file selector
+                _sample_voices = get_sample_voices(config.SAMPLE_VOICE_DIR)
+                if _sample_voices:
+                    _sel_sample_label = st.selectbox(
+                        t("tts_sample_voice_label", lang),
+                        options=list(_sample_voices.keys()),
+                        key="tts_sample_voice_select",
+                    )
+                    st.session_state["_tts_sample_path"] = _sample_voices[_sel_sample_label]
+                else:
+                    st.caption(t("tts_sample_no_files", lang))
+                    st.session_state["_tts_sample_path"] = None
 
         st.divider()
 
