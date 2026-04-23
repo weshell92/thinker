@@ -59,7 +59,11 @@ def t(key: str, lang: str = "zh", **kwargs: str) -> str:
 # ---------------------------------------------------------------------------
 
 @st.cache_resource
-def get_db() -> Database:
+def get_db(_schema_version: int = 2) -> Database:
+    # `_schema_version` is a cache-busting key.
+    # Bump it whenever Database schema or methods change so that
+    # Streamlit creates a fresh instance instead of reusing a stale
+    # cached object.
     return Database(config.DB_PATH)
 
 
@@ -1143,12 +1147,18 @@ def _get_fish_settings() -> tuple[bool, str, str | None]:
 
 
 def _do_tts(text: str, lang: str, btn_key: str) -> None:
-    """Render a 🔊 read-aloud button for the given text. Plays inline."""
+    """Render a 🔊 read-aloud button for the given text. Plays inline.
+
+    Audio bytes are cached in ``st.session_state`` so that the player
+    and download button survive Streamlit reruns (e.g. after clicking
+    *download*).
+    """
+    audio_state_key = f"{btn_key}_audio"
+
+    # ---- Synthesis button ----
     if st.button(t("tts_read_this", lang), key=btn_key):
         use_sample, fish_key, sample_path = _get_fish_settings()
-
         if use_sample:
-            # --- Fish Audio voice cloning path ---
             if not fish_key:
                 st.warning(t("tts_sample_no_key", lang))
                 return
@@ -1162,7 +1172,6 @@ def _do_tts(text: str, lang: str, btn_key: str) -> None:
                     st.error(t("tts_error", lang, error=str(exc)))
                     return
         else:
-            # --- Standard edge-tts path ---
             voice_id, rate = _get_tts_settings(lang)
             with st.spinner(t("tts_generating", lang)):
                 try:
@@ -1170,17 +1179,197 @@ def _do_tts(text: str, lang: str, btn_key: str) -> None:
                 except Exception as exc:
                     st.error(t("tts_error", lang, error=str(exc)))
                     return
-
         if audio_bytes:
-            st.audio(audio_bytes, format="audio/mp3")
-            st.download_button(
-                label=t("tts_download", lang),
-                data=audio_bytes,
-                file_name="thinker_tts.mp3",
-                mime="audio/mp3",
-                key=f"{btn_key}_dl",
-            )
+            st.session_state[audio_state_key] = audio_bytes
 
+    # ---- Playback / download (always rendered from cache) ----
+    audio_bytes = st.session_state.get(audio_state_key)
+    if audio_bytes:
+        st.audio(audio_bytes, format="audio/mp3")
+        st.download_button(
+            label=t("tts_download", lang),
+            data=audio_bytes,
+            file_name="thinker_tts.mp3",
+            mime="audio/mp3",
+            key=f"{btn_key}_dl",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tab 6: Writing Assistant
+# ---------------------------------------------------------------------------
+
+_WRITE_PERCEPTION_PROMPT_ZH = """你是一位专业的写作分析助手。请仔细阅读用户提供的文本，分析并回答：
+
+作者在这段文字中希望向读者传递什么核心感知？请从以下几个维度进行分析：
+1. 核心情感或氛围（如：悲伤、激励、紧张、温暖等）
+2. 作者的核心意图或观点
+3. 作者希望读者产生什么感受或理解
+4. 文本中体现这种感知的关键手法（修辞、用词、结构等）
+
+请用清晰、有条理的中文回答。"""
+
+_WRITE_PERCEPTION_PROMPT_EN = """You are a professional writing analysis assistant. Please carefully read the text provided by the user and analyze:
+
+What core perception does the author want to convey to the reader? Analyze from the following dimensions:
+1. Core emotion or atmosphere (e.g., sadness, inspiration, tension, warmth)
+2. The author's core intention or viewpoint
+3. What feeling or understanding the author wants the reader to have
+4. Key techniques (rhetoric, word choice, structure) that manifest this perception
+
+Please answer in clear, well-structured English."""
+
+_WRITE_OPTIMIZE_PROMPT_ZH = """你是一位资深写作教练。请仔细阅读用户提供的文本，先理解作者想传递的核心感知，然后以作者的身份重写这段文本。
+
+要求：
+1. 先简要说明原文想传递的核心感知是什么
+2. 重写后的文本必须更精准、更有力地传递同一感知
+3. 让读者能够更清晰、更深刻地理解作者想让他理解的感受或观点
+4. 保持原文的基本主题和事实，但优化表达方式（修辞、节奏、用词、结构）
+5. 用中文输出优化后的文本
+
+请先给出分析，再给出优化后的文本。"""
+
+_WRITE_OPTIMIZE_PROMPT_EN = """You are a senior writing coach. Please carefully read the text provided by the user, understand the core perception the author wants to convey, and then rewrite the text from the author's perspective.
+
+Requirements:
+1. Briefly explain what core perception the original text aims to convey
+2. The rewritten text must convey the same perception more precisely and powerfully
+3. Help the reader understand the intended feeling or viewpoint more clearly and deeply
+4. Keep the original theme and facts, but optimize expression (rhetoric, rhythm, word choice, structure)
+5. Output the optimized text in English
+
+Please provide your analysis first, then the optimized text."""
+
+
+def page_write(lang: str, api_key: str, model: str, base_url: str, provider_name: str = "", is_native_gemini: bool = False) -> None:
+    """Render the Writing Assistant page."""
+    st.header(t("write_title", lang))
+    st.caption(t("write_subtitle", lang))
+
+    # ---- View a saved record ----
+    if st.session_state.get("view_write_record_id") is not None:
+        db = get_db()
+        rec = db.get_write_record_by_id(st.session_state.view_write_record_id)
+        if rec:
+            st.info(f"📄 {rec.input_text}")
+            st.markdown("---")
+            action_label = t("write_perception_title", lang) if rec.action_type == "perception" else t("write_optimize_title", lang)
+            st.markdown(f"**{action_label}**")
+            st.markdown(rec.result)
+            _do_tts(rec.result, lang, btn_key=f"tts_write_saved_{rec.id}")
+            if st.button("↩️ Back / 返回", key="write_back"):
+                st.session_state.view_write_record_id = None
+                st.rerun()
+            return
+        else:
+            st.session_state.view_write_record_id = None
+
+    # ---- Input ----
+    write_text = st.text_area(
+        t("write_input_placeholder", lang),
+        height=200,
+        key="write_input_text",
+    )
+
+    col_perception, col_optimize = st.columns(2)
+
+    # ---- 传递感知 ----
+    with col_perception:
+        perception_clicked = st.button(t("write_perception_button", lang), key="write_perception_btn")
+
+    # ---- 优化传递感知 ----
+    with col_optimize:
+        optimize_clicked = st.button(t("write_optimize_button", lang), key="write_optimize_btn", type="primary")
+
+    if perception_clicked:
+        if not api_key:
+            st.warning(t("error_no_key", lang))
+            return
+        if not write_text or not write_text.strip():
+            st.warning(t("write_no_text", lang))
+            return
+
+        provider = _make_provider(api_key, model, base_url, is_native_gemini)
+        system_prompt = _WRITE_PERCEPTION_PROMPT_ZH if lang == "zh" else _WRITE_PERCEPTION_PROMPT_EN
+        user_prompt = write_text.strip()
+
+        with st.spinner(t("write_thinking", lang)):
+            try:
+                result = provider.complete_text(system_prompt, user_prompt)
+            except ProviderError as exc:
+                error_code = str(exc)
+                if "QUOTA_EXCEEDED" in error_code:
+                    st.error(t("error_quota", lang, provider=provider_name))
+                elif "AUTH_ERROR" in error_code:
+                    st.error(t("error_auth", lang))
+                elif "CONTEXT_TOO_LONG" in error_code:
+                    st.error(t("error_context_too_long", lang))
+                elif "TIMEOUT" in error_code:
+                    st.warning(t("error_timeout", lang))
+                elif "RATE_LIMIT" in error_code:
+                    st.warning(t("error_rate_limit", lang))
+                else:
+                    st.error(t("error_analysis", lang, error=error_code))
+                return
+            except Exception as exc:
+                st.error(t("error_analysis", lang, error=str(exc)))
+                return
+
+        st.markdown(f"**{t('write_perception_title', lang)}**")
+        st.markdown(result)
+        _do_tts(result, lang, btn_key="tts_write_perception")
+        db = get_db()
+        db.save_write_record(write_text.strip(), result, "perception", lang,
+                             provider_name=provider_name, model_name=model)
+        st.toast(t("saved", lang))
+
+    if optimize_clicked:
+        if not api_key:
+            st.warning(t("error_no_key", lang))
+            return
+        if not write_text or not write_text.strip():
+            st.warning(t("write_no_text", lang))
+            return
+
+        provider = _make_provider(api_key, model, base_url, is_native_gemini)
+        system_prompt = _WRITE_OPTIMIZE_PROMPT_ZH if lang == "zh" else _WRITE_OPTIMIZE_PROMPT_EN
+        user_prompt = write_text.strip()
+
+        with st.spinner(t("write_thinking", lang)):
+            try:
+                result = provider.complete_text(system_prompt, user_prompt)
+            except ProviderError as exc:
+                error_code = str(exc)
+                if "QUOTA_EXCEEDED" in error_code:
+                    st.error(t("error_quota", lang, provider=provider_name))
+                elif "AUTH_ERROR" in error_code:
+                    st.error(t("error_auth", lang))
+                elif "CONTEXT_TOO_LONG" in error_code:
+                    st.error(t("error_context_too_long", lang))
+                elif "TIMEOUT" in error_code:
+                    st.warning(t("error_timeout", lang))
+                elif "RATE_LIMIT" in error_code:
+                    st.warning(t("error_rate_limit", lang))
+                else:
+                    st.error(t("error_analysis", lang, error=error_code))
+                return
+            except Exception as exc:
+                st.error(t("error_analysis", lang, error=str(exc)))
+                return
+
+        st.markdown(f"**{t('write_optimize_title', lang)}**")
+        st.markdown(result)
+        _do_tts(result, lang, btn_key="tts_write_optimize")
+        db = get_db()
+        db.save_write_record(write_text.strip(), result, "optimize", lang,
+                             provider_name=provider_name, model_name=model)
+        st.toast(t("saved", lang))
+
+
+# ---------------------------------------------------------------------------
+# Tab 7: Text-to-Speech (standalone input)
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Tab 6: Text-to-Speech (standalone input)
@@ -1238,16 +1427,21 @@ def page_tts(lang: str) -> None:
                     return
 
         if audio_bytes:
-            # Use subject as filename if provided, else default
-            file_name = f"{tts_subject.strip() if tts_subject.strip() else 'thinker_tts'}.mp3"
-            st.audio(audio_bytes, format="audio/mp3")
-            st.download_button(
-                label=t("tts_download", lang),
-                data=audio_bytes,
-                file_name=file_name,
-                mime="audio/mp3",
-                key="tts_main_dl",
-            )
+            st.session_state["tts_standalone_audio"] = audio_bytes
+            st.session_state["tts_standalone_subject"] = tts_subject.strip()
+
+    # ---- Playback / download (cached across reruns) ----
+    audio_bytes = st.session_state.get("tts_standalone_audio")
+    if audio_bytes:
+        file_name = f"{st.session_state.get('tts_standalone_subject', '') or 'thinker_tts'}.mp3"
+        st.audio(audio_bytes, format="audio/mp3")
+        st.download_button(
+            label=t("tts_download", lang),
+            data=audio_bytes,
+            file_name=file_name,
+            mime="audio/mp3",
+            key="tts_main_dl",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1268,6 +1462,8 @@ def main() -> None:
         st.session_state.view_chat_record_id = None
     if "view_gateway_qa_record_id" not in st.session_state:
         st.session_state.view_gateway_qa_record_id = None
+    if "view_write_record_id" not in st.session_state:
+        st.session_state.view_write_record_id = None
 
     # =================================================================
     # Sidebar
@@ -1300,7 +1496,58 @@ def main() -> None:
             },
             "Google Gemini": {
                 "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-                "models": ["gemini-pro-latest","gemini-flash-latest","gemini-3.1-pro-preview","gemini-3.1-flash-lite","gemini-3-flash-live","gemini-3-flash-preview", "gemini-2.5-pro","gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite",  "gemma-4-31b-it", "gemini-embedding-2-preview"],
+                "models": [
+                    "aqa",
+                    "deep-research-pro-preview-12-2025",
+                    "gemini-2.0-flash",
+                    "gemini-2.0-flash-001",
+                    "gemini-2.0-flash-lite",
+                    "gemini-2.0-flash-lite-001",
+                    "gemini-2.5-computer-use-preview-10-2025",
+                    "gemini-2.5-flash",
+                    "gemini-2.5-flash-image",
+                    "gemini-2.5-flash-lite",
+                    "gemini-2.5-flash-native-audio-latest",
+                    "gemini-2.5-flash-native-audio-preview-09-2025",
+                    "gemini-2.5-flash-native-audio-preview-12-2025",
+                    "gemini-2.5-flash-preview-tts",
+                    "gemini-2.5-pro",
+                    "gemini-2.5-pro-preview-tts",
+                    "gemini-3-flash-preview",
+                    "gemini-3-pro-image-preview",
+                    "gemini-3-pro-preview",
+                    "gemini-3.1-flash-image-preview",
+                    "gemini-3.1-flash-lite-preview",
+                    "gemini-3.1-flash-live-preview",
+                    "gemini-3.1-pro-preview",
+                    "gemini-3.1-pro-preview-customtools",
+                    "gemini-embedding-001",
+                    "gemini-embedding-2-preview",
+                    "gemini-flash-latest",
+                    "gemini-flash-lite-latest",
+                    "gemini-pro-latest",
+                    "gemini-robotics-er-1.5-preview",
+                    "gemma-3-12b-it",
+                    "gemma-3-1b-it",
+                    "gemma-3-27b-it",
+                    "gemma-3-4b-it",
+                    "gemma-3n-e2b-it",
+                    "gemma-3n-e4b-it",
+                    "gemma-4-26b-a4b-it",
+                    "gemma-4-31b-it",
+                    "imagen-4.0-fast-generate-001",
+                    "imagen-4.0-generate-001",
+                    "imagen-4.0-ultra-generate-001",
+                    "lyria-3-clip-preview",
+                    "lyria-3-pro-preview",
+                    "nano-banana-pro-preview",
+                    "veo-2.0-generate-001",
+                    "veo-3.0-fast-generate-001",
+                    "veo-3.0-generate-001",
+                    "veo-3.1-fast-generate-preview",
+                    "veo-3.1-generate-preview",
+                    "veo-3.1-lite-generate-preview"
+                ],
             },
             "Gemini中转 (Native)": {
                 "base_url": "https://gemini-balance-lite-dxsq9gzm0cf3.weshell92.deno.net",
@@ -1496,6 +1743,7 @@ def main() -> None:
             "tab_gateway": t("tab_gateway", lang),
             "tab_chat": t("tab_chat", lang),
             "tab_tts": t("tab_tts", lang),
+            "tab_write": t("tab_write", lang),
         }
         with st.expander(t("tab_visibility_label", lang), expanded=False):
             st.caption(t("tab_visibility_help", lang))
@@ -1591,6 +1839,26 @@ def main() -> None:
                             db.delete_gateway_qa_record(gw_rec.id)  # type: ignore[arg-type]
                             st.rerun()
 
+        # ---- Writing History ----
+        st.subheader(t("write_history_title", lang))
+        write_records = db.get_all_write_records(limit=30)
+        if not write_records:
+            st.caption(t("history_empty", lang))
+        else:
+            with st.expander(f"✍️ {t('write_history_title', lang)} ({len(write_records)})", expanded=False):
+                for w_rec in write_records:
+                    w_label = w_rec.input_text[:35] + ("…" if len(w_rec.input_text) > 35 else "")
+                    col_w_btn, col_w_del = st.columns([4, 1])
+                    with col_w_btn:
+                        _pm = f" [{w_rec.provider_name}/{w_rec.model_name}]" if w_rec.model_name else ""
+                        _action_icon = "🎯" if w_rec.action_type == "perception" else "✍️"
+                        if st.button(f"{_action_icon} {w_label}{_pm}", key=f"view_write_{w_rec.id}"):
+                            st.session_state.view_write_record_id = w_rec.id
+                    with col_w_del:
+                        if st.button("🗑️", key=f"del_write_{w_rec.id}"):
+                            db.delete_write_record(w_rec.id)  # type: ignore[arg-type]
+                            st.rerun()
+
 
     # =================================================================
     # Main area – Tabs (filtered by visibility settings)
@@ -1599,7 +1867,7 @@ def main() -> None:
     st.caption(t("app_subtitle", lang))
 
     _is_native_gemini = bool(preset_cfg.get("native_gemini"))
-    _visible = st.session_state.get("_visible_tabs", ["tab_analyze", "tab_read", "tab_qa", "tab_gateway", "tab_chat", "tab_tts"])
+    _visible = st.session_state.get("_visible_tabs", ["tab_analyze", "tab_read", "tab_qa", "tab_gateway", "tab_chat", "tab_tts", "tab_write"])
 
     # Build tab labels and keys for visible tabs only
     _TAB_REGISTRY = [
@@ -1609,6 +1877,7 @@ def main() -> None:
         ("tab_gateway", t("tab_gateway", lang)),
         ("tab_chat", t("tab_chat", lang)),
         ("tab_tts", t("tab_tts", lang)),
+        ("tab_write", t("tab_write", lang)),
     ]
     _shown = [(k, lbl) for k, lbl in _TAB_REGISTRY if k in _visible]
     if not _shown:
@@ -1640,6 +1909,10 @@ def main() -> None:
     if "tab_tts" in _tab_map:
         with _tab_map["tab_tts"]:
             page_tts(lang)
+
+    if "tab_write" in _tab_map:
+        with _tab_map["tab_write"]:
+            page_write(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
 
 
 if __name__ == "__main__":

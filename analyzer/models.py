@@ -84,3 +84,17 @@ class GatewayQARecord(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
+class WriteRecord(BaseModel):
+    """A persisted writing assistant record (maps to SQLite row)."""
+    model_config = ConfigDict(protected_namespaces=())
+
+    id: int | None = None
+    input_text: str = ""
+    result: str = ""
+    action_type: str = ""  # "perception" | "optimize"
+    language: str = "zh"
+    provider_name: str = ""
+    model_name: str = ""
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
