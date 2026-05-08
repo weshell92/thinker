@@ -59,12 +59,68 @@ def t(key: str, lang: str = "zh", **kwargs: str) -> str:
 # ---------------------------------------------------------------------------
 
 @st.cache_resource
-def get_db(_schema_version: int = 2) -> Database:
+def get_db(_schema_version: int = 3) -> Database:
     # `_schema_version` is a cache-busting key.
     # Bump it whenever Database schema or methods change so that
     # Streamlit creates a fresh instance instead of reusing a stale
     # cached object.
     return Database(config.DB_PATH)
+
+
+# ---------------------------------------------------------------------------
+# DOCX export helper
+# ---------------------------------------------------------------------------
+
+def _export_to_docx(sections: list[tuple[str, str]], filename: str = "export.docx") -> bytes:
+    """Build a DOCX from sections and return as bytes for st.download_button."""
+    from docx import Document
+    from docx.shared import Inches, Pt
+    import io
+
+    doc = Document()
+    for title, content in sections:
+        # Title
+        p = doc.add_paragraph()
+        run = p.add_run(title)
+        run.bold = True
+        run.font.size = Pt(14)
+        # Content
+        doc.add_paragraph(content)
+        doc.add_paragraph()  # spacing
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# File import helper
+# ---------------------------------------------------------------------------
+
+_IMPORT_FILE_TYPES = ["txt", "md", "docx", "pdf"]
+
+
+def _import_file_to_text(target_session_key: str, label: str, help_text: str) -> None:
+    """Render a file uploader that extracts text and writes it into *target_session_key*.
+
+    Uses a file-id guard to avoid infinite reruns.
+    """
+    uploaded = st.file_uploader(label, type=_IMPORT_FILE_TYPES, help=help_text, key=f"_import_{target_session_key}")
+    if uploaded is not None:
+        file_id = f"{uploaded.name}:{uploaded.size}"
+        guard_key = f"_import_guard_{target_session_key}"
+        if st.session_state.get(guard_key) != file_id:
+            try:
+                text = _extract_file_text(uploaded)
+                if text and text.strip():
+                    st.session_state[target_session_key] = text.strip()
+                    st.session_state[guard_key] = file_id
+                    st.toast(t("imported", st.session_state.get("lang", "zh")))
+                    st.rerun()
+                else:
+                    st.warning(t("chat_file_empty", st.session_state.get("lang", "zh")))
+            except Exception as exc:
+                st.error(t("chat_file_extract_error", st.session_state.get("lang", "zh"), error=str(exc)))
 
 
 @st.cache_data
@@ -380,9 +436,24 @@ def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: s
             st.markdown(qa_rec.answer)
             st.caption(t("qa_context_note", lang, book=qa_rec.book_name))
             _do_tts(qa_rec.answer, lang, btn_key="tts_qa_saved")
-            if st.button("↩️ Back / 返回", key="qa_back"):
-                st.session_state.view_qa_record_id = None
-                st.rerun()
+            col_back, col_export = st.columns([1, 1])
+            with col_back:
+                if st.button("↩️ Back / 返回", key="qa_back"):
+                    st.session_state.view_qa_record_id = None
+                    st.rerun()
+            with col_export:
+                _qa_docx = _export_to_docx([
+                    (t("qa_book_name", lang), qa_rec.book_name),
+                    (t("qa_input_placeholder", lang), qa_rec.question),
+                    (t("qa_answer_title", lang), qa_rec.answer),
+                ], filename=f"qa_{qa_rec.id}.docx")
+                st.download_button(
+                    label=t("export_docx_button", lang),
+                    data=_qa_docx,
+                    file_name=f"qa_{qa_rec.id}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key=f"export_qa_{qa_rec.id}",
+                )
             return
         else:
             st.session_state.view_qa_record_id = None
@@ -392,6 +463,13 @@ def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: s
         t("qa_book_name", lang),
         value="Beyond Feelings: A Guide to Critical Thinking",
         key="qa_book_name",
+    )
+
+    # Import file to question
+    _import_file_to_text(
+        target_session_key="qa_question",
+        label=t("import_file_label", lang),
+        help_text=t("import_file_help", lang),
     )
 
     # Question input
@@ -470,6 +548,18 @@ def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: s
                     st.markdown(item["answer"])
                     st.caption(t("qa_context_note", lang, book=item["book"]))
                     _do_tts(item["answer"], lang, btn_key=f"tts_qa_{_book}_{_idx}")
+                    _qa_docx = _export_to_docx([
+                        (t("qa_book_name", lang), item["book"]),
+                        (t("qa_input_placeholder", lang), item["question"]),
+                        (t("qa_answer_title", lang), item["answer"]),
+                    ], filename="qa.docx")
+                    st.download_button(
+                        label=t("export_docx_button", lang),
+                        data=_qa_docx,
+                        file_name=f"qa_{item['book']}_{_idx}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key=f"export_qa_live_{_book}_{_idx}",
+                    )
                     if _idx < len(_items) - 1:
                         st.divider()
 
@@ -593,9 +683,23 @@ def page_chat(lang: str, api_key: str, model: str, base_url: str, provider_name:
             st.markdown(f"**{t('chat_answer_title', lang)}**")
             st.markdown(chat_rec.answer)
             _do_tts(chat_rec.answer, lang, btn_key="tts_chat_saved")
-            if st.button("↩️ Back / 返回", key="chat_back"):
-                st.session_state.view_chat_record_id = None
-                st.rerun()
+            col_back, col_export = st.columns([1, 1])
+            with col_back:
+                if st.button("↩️ Back / 返回", key="chat_back"):
+                    st.session_state.view_chat_record_id = None
+                    st.rerun()
+            with col_export:
+                _chat_docx = _export_to_docx([
+                    (t("chat_you", lang), chat_rec.question),
+                    (t("chat_ai", lang), chat_rec.answer),
+                ], filename=f"chat_{chat_rec.id}.docx")
+                st.download_button(
+                    label=t("export_docx_button", lang),
+                    data=_chat_docx,
+                    file_name=f"chat_{chat_rec.id}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key=f"export_chat_{chat_rec.id}",
+                )
             return
         else:
             st.session_state.view_chat_record_id = None
@@ -647,6 +751,13 @@ def page_chat(lang: str, api_key: str, model: str, base_url: str, provider_name:
 
     # ---- Chat input (multi-line + clipboard paste) ----
     from streamlit_paste_button import paste_image_button as _paste_btn
+
+    # Import file to chat input
+    _import_file_to_text(
+        target_session_key="chat_text_area",
+        label=t("import_file_label", lang),
+        help_text=t("import_file_help", lang),
+    )
 
     user_input = st.text_area(
         t("chat_input_placeholder", lang),
@@ -803,12 +914,28 @@ def page_chat(lang: str, api_key: str, model: str, base_url: str, provider_name:
         st.session_state.chat_pasted_images = []
         st.session_state.chat_last_paste_hash = None
 
-    # ---- Clear conversation button ----
+    # ---- Clear conversation & export buttons ----
     if st.session_state.chat_messages:
-        if st.button(t("chat_clear_button", lang), key="chat_clear"):
-            st.session_state.chat_messages = []
-            st.toast(t("chat_cleared", lang))
-            st.rerun()
+        col_clear, col_export_chat = st.columns([1, 1])
+        with col_clear:
+            if st.button(t("chat_clear_button", lang), key="chat_clear"):
+                st.session_state.chat_messages = []
+                st.toast(t("chat_cleared", lang))
+                st.rerun()
+        with col_export_chat:
+            _chat_sections: list[tuple[str, str]] = []
+            for msg in st.session_state.chat_messages:
+                role_title = t("chat_you", lang) if msg["role"] == "user" else t("chat_ai", lang)
+                content = msg.get("display", msg["content"])
+                _chat_sections.append((role_title, content))
+            _chat_docx = _export_to_docx(_chat_sections, filename="chat.docx")
+            st.download_button(
+                label=t("export_docx_button", lang),
+                data=_chat_docx,
+                file_name="chat_export.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="export_chat_conversation",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1258,12 +1385,34 @@ def page_write(lang: str, api_key: str, model: str, base_url: str, provider_name
             st.markdown(f"**{action_label}**")
             st.markdown(rec.result)
             _do_tts(rec.result, lang, btn_key=f"tts_write_saved_{rec.id}")
-            if st.button("↩️ Back / 返回", key="write_back"):
-                st.session_state.view_write_record_id = None
-                st.rerun()
+            col_back, col_export = st.columns([1, 1])
+            with col_back:
+                if st.button("↩️ Back / 返回", key="write_back"):
+                    st.session_state.view_write_record_id = None
+                    st.rerun()
+            with col_export:
+                action_label = t("write_perception_title", lang) if rec.action_type == "perception" else t("write_optimize_title", lang)
+                _write_docx = _export_to_docx([
+                    (t("write_input_placeholder", lang), rec.input_text),
+                    (action_label, rec.result),
+                ], filename=f"write_{rec.id}.docx")
+                st.download_button(
+                    label=t("export_docx_button", lang),
+                    data=_write_docx,
+                    file_name=f"write_{rec.id}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key=f"export_write_{rec.id}",
+                )
             return
         else:
             st.session_state.view_write_record_id = None
+
+    # Import file to text area
+    _import_file_to_text(
+        target_session_key="write_input_text",
+        label=t("import_file_label", lang),
+        help_text=t("import_file_help", lang),
+    )
 
     # ---- Input ----
     write_text = st.text_area(
@@ -1323,6 +1472,11 @@ def page_write(lang: str, api_key: str, model: str, base_url: str, provider_name
         db.save_write_record(write_text.strip(), result, "perception", lang,
                              provider_name=provider_name, model_name=model)
         st.toast(t("saved", lang))
+        st.session_state["_write_last_result"] = {
+            "type": "perception",
+            "input": write_text.strip(),
+            "result": result,
+        }
 
     if optimize_clicked:
         if not api_key:
@@ -1365,6 +1519,27 @@ def page_write(lang: str, api_key: str, model: str, base_url: str, provider_name
         db.save_write_record(write_text.strip(), result, "optimize", lang,
                              provider_name=provider_name, model_name=model)
         st.toast(t("saved", lang))
+        st.session_state["_write_last_result"] = {
+            "type": "optimize",
+            "input": write_text.strip(),
+            "result": result,
+        }
+
+    # ---- Export last writing result (survives rerun) ----
+    if st.session_state.get("_write_last_result"):
+        _wdata = st.session_state["_write_last_result"]
+        _w_title = t("write_perception_title", lang) if _wdata["type"] == "perception" else t("write_optimize_title", lang)
+        _w_docx = _export_to_docx([
+            (t("write_input_placeholder", lang), _wdata["input"]),
+            (_w_title, _wdata["result"]),
+        ], filename="write.docx")
+        st.download_button(
+            label=t("export_docx_button", lang),
+            data=_w_docx,
+            file_name="write_export.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            key="export_write_last",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1445,11 +1620,199 @@ def page_tts(lang: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Admin Panel
+# ---------------------------------------------------------------------------
+
+_ADMIN_TABLES = {
+    "analysis": ("analysis_history", "analysis"),
+    "qa": ("qa_history", "qa"),
+    "chat": ("chat_history", "chat"),
+    "gateway_qa": ("gateway_qa_history", "gateway_qa"),
+    "write": ("write_history", "write"),
+}
+
+
+def page_admin(lang: str) -> None:
+    """Render the admin panel for database record management."""
+    st.title(t("admin_title", lang))
+
+    # ---- Password gate ----
+    if not st.session_state.get("admin_authed"):
+        pwd = st.text_input(t("admin_password_label", lang), type="password", key="admin_pwd_input")
+        if st.button("Login", key="admin_login_btn"):
+            if pwd == config.THINKER_ADMIN_PASSWORD:
+                st.session_state["admin_authed"] = True
+                st.rerun()
+            else:
+                st.error(t("admin_password_error", lang))
+        return
+
+    db = get_db()
+
+    # ---- Back to home ----
+    if st.button(t("admin_back_to_home", lang), key="admin_back_home"):
+        st.query_params.pop("page", None)
+        st.session_state.pop("admin_authed", None)
+        st.rerun()
+
+    st.divider()
+
+    # ---- Statistics ----
+    st.subheader(t("admin_stats", lang))
+    stats = db.get_stats()
+    _stat_cols = st.columns(5)
+    _stat_labels = {
+        "analysis": "🔍 Analysis",
+        "qa": "📝 Q&A",
+        "chat": "💬 Chat",
+        "gateway_qa": "🔌 Gateway",
+        "write": "✍️ Write",
+    }
+    for idx, (key, label) in enumerate(_stat_labels.items()):
+        with _stat_cols[idx]:
+            st.metric(label, stats[key]["total"], f"🟢{stats[key]['active']} / 🔴{stats[key]['deleted']}")
+
+    st.divider()
+
+    # ---- Record browser ----
+    _table_options = {
+        "analysis": "🔍 analysis_history",
+        "qa": "📝 qa_history",
+        "chat": "💬 chat_history",
+        "gateway_qa": "🔌 gateway_qa_history",
+        "write": "✍️ write_history",
+    }
+    selected_table = st.selectbox(
+        t("admin_table_select", lang),
+        options=list(_table_options.keys()),
+        format_func=lambda k: _table_options[k],
+        key="admin_table_select",
+    )
+
+    filter_mode = st.radio(
+        "",
+        options=["all", "active", "deleted"],
+        format_func=lambda k: {
+            "all": t("admin_filter_all", lang),
+            "active": t("admin_filter_active", lang),
+            "deleted": t("admin_filter_deleted", lang),
+        }[k],
+        horizontal=True,
+        key="admin_filter",
+    )
+
+    # Fetch records
+    if selected_table == "analysis":
+        records = db.get_all_records_include_deleted(limit=200)
+    elif selected_table == "qa":
+        records = db.get_all_qa_records_include_deleted(limit=200)
+    elif selected_table == "chat":
+        records = db.get_all_chat_records_include_deleted(limit=200)
+    elif selected_table == "gateway_qa":
+        records = db.get_all_gateway_qa_records_include_deleted(limit=200)
+    else:
+        records = db.get_all_write_records_include_deleted(limit=200)
+
+    # Apply filter
+    if filter_mode == "active":
+        records = [r for r in records if r.deleted_at is None]
+    elif filter_mode == "deleted":
+        records = [r for r in records if r.deleted_at is not None]
+
+    st.caption(f"{len(records)} records")
+
+    # Render table
+    if not records:
+        st.info(t("history_empty", lang))
+    else:
+        for rec in records:
+            with st.container():
+                _is_deleted = rec.deleted_at is not None
+                _border_color = "#ff4b4b" if _is_deleted else "#e0e0e0"
+                st.markdown(
+                    f"""
+                    <div style="border-left: 4px solid {_border_color}; padding-left: 10px; margin-bottom: 10px;">
+                        <b>ID {rec.id}</b> {"<span style='color:#ff4b4b'>[" + t("record_deleted", lang) + "]</span>" if _is_deleted else ""}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                # Build summary based on record type
+                if selected_table == "analysis":
+                    _content = rec.input_text[:80] + "…" if len(rec.input_text) > 80 else rec.input_text
+                elif selected_table in ("qa", "chat", "gateway_qa"):
+                    _content = rec.question[:80] + "…" if len(rec.question) > 80 else rec.question
+                else:
+                    _content = rec.input_text[:80] + "…" if len(rec.input_text) > 80 else rec.input_text
+
+                col1, col2, col3, col4 = st.columns([4, 2, 2, 2])
+                with col1:
+                    st.markdown(f"<small>{_content}</small>", unsafe_allow_html=True)
+                with col2:
+                    st.caption(f"{rec.provider_name or '-'}/{rec.model_name or '-'}")
+                with col3:
+                    st.caption(str(rec.created_at))
+                with col4:
+                    _act_cols = st.columns([1, 1])
+                    if _is_deleted:
+                        with _act_cols[0]:
+                            if st.button(t("admin_restore", lang), key=f"admin_restore_{selected_table}_{rec.id}"):
+                                if selected_table == "analysis":
+                                    db.restore_record(rec.id)
+                                elif selected_table == "qa":
+                                    db.restore_qa_record(rec.id)
+                                elif selected_table == "chat":
+                                    db.restore_chat_record(rec.id)
+                                elif selected_table == "gateway_qa":
+                                    db.restore_gateway_qa_record(rec.id)
+                                else:
+                                    db.restore_write_record(rec.id)
+                                st.toast("Restored")
+                                st.rerun()
+                    with _act_cols[1]:
+                        if st.button(t("admin_hard_delete", lang), key=f"admin_hard_del_{selected_table}_{rec.id}"):
+                            st.session_state[f"_confirm_hard_del_{selected_table}_{rec.id}"] = True
+                            st.rerun()
+
+                    # Confirmation area for hard delete
+                    if st.session_state.get(f"_confirm_hard_del_{selected_table}_{rec.id}"):
+                        st.warning(t("admin_confirm_hard_delete", lang))
+                        c1, c2 = st.columns([1, 1])
+                        with c1:
+                            if st.button(t("admin_confirm_yes", lang), key=f"admin_confirm_yes_{selected_table}_{rec.id}"):
+                                if selected_table == "analysis":
+                                    db.hard_delete_record(rec.id)
+                                elif selected_table == "qa":
+                                    db.hard_delete_qa_record(rec.id)
+                                elif selected_table == "chat":
+                                    db.hard_delete_chat_record(rec.id)
+                                elif selected_table == "gateway_qa":
+                                    db.hard_delete_gateway_qa_record(rec.id)
+                                else:
+                                    db.hard_delete_write_record(rec.id)
+                                st.session_state.pop(f"_confirm_hard_del_{selected_table}_{rec.id}", None)
+                                st.toast("Permanently deleted")
+                                st.rerun()
+                        with c2:
+                            if st.button("Cancel", key=f"admin_cancel_del_{selected_table}_{rec.id}"):
+                                st.session_state.pop(f"_confirm_hard_del_{selected_table}_{rec.id}", None)
+                                st.rerun()
+                st.divider()
+
+
+# ---------------------------------------------------------------------------
 # Main UI
 # ---------------------------------------------------------------------------
 
 def main() -> None:
     st.set_page_config(page_title="Thinker", page_icon="🧠", layout="wide")
+
+    # --- Admin route ---
+    if st.query_params.get("page") == "admin":
+        if "lang" not in st.session_state:
+            st.session_state.lang = config.DEFAULT_LANGUAGE
+        page_admin(st.session_state.get("lang", config.DEFAULT_LANGUAGE))
+        return
 
     # --- Session state defaults ---
     if "lang" not in st.session_state:
@@ -1858,6 +2221,11 @@ def main() -> None:
                         if st.button("🗑️", key=f"del_write_{w_rec.id}"):
                             db.delete_write_record(w_rec.id)  # type: ignore[arg-type]
                             st.rerun()
+
+        st.divider()
+
+        # ---- Admin entry ----
+        st.link_button(t("admin_enter", lang), url="/?page=admin")
 
 
     # =================================================================

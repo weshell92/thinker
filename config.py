@@ -22,3 +22,6 @@ FISH_AUDIO_API_KEY: str = os.environ.get("FISH_AUDIO_API_KEY", "")
 # Add more MP3 files to this directory to extend the sample voice list
 SAMPLE_VOICE_DIR: str = os.path.join(os.path.dirname(__file__), "video_sample")
 
+# --- Admin Panel ---
+THINKER_ADMIN_PASSWORD: str = os.environ.get("THINKER_ADMIN_PASSWORD", "thinker2024")
+

@@ -42,6 +42,7 @@ class AnalysisRecord(BaseModel):
     provider_name: str = ""
     model_name: str = ""
     created_at: datetime = Field(default_factory=datetime.now)
+    deleted_at: datetime | None = None
 
 
 class QARecord(BaseModel):
@@ -56,6 +57,7 @@ class QARecord(BaseModel):
     provider_name: str = ""
     model_name: str = ""
     created_at: datetime = Field(default_factory=datetime.now)
+    deleted_at: datetime | None = None
 
 
 class ChatRecord(BaseModel):
@@ -69,6 +71,7 @@ class ChatRecord(BaseModel):
     provider_name: str = ""
     model_name: str = ""
     created_at: datetime = Field(default_factory=datetime.now)
+    deleted_at: datetime | None = None
 
 
 class GatewayQARecord(BaseModel):
@@ -82,6 +85,7 @@ class GatewayQARecord(BaseModel):
     provider_name: str = ""
     model_name: str = ""
     created_at: datetime = Field(default_factory=datetime.now)
+    deleted_at: datetime | None = None
 
 
 class WriteRecord(BaseModel):
@@ -96,5 +100,6 @@ class WriteRecord(BaseModel):
     provider_name: str = ""
     model_name: str = ""
     created_at: datetime = Field(default_factory=datetime.now)
+    deleted_at: datetime | None = None
 
 
