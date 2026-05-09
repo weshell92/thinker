@@ -137,5 +137,22 @@
   "paste_image_count": "📋 {n} screenshot(s) pasted",
   "paste_image_delete": "🗑️ Delete",
   "paste_image_clear_all": "🗑️ Clear All Screenshots",
-  "chat_input_hint": "Multi-line input supported; paste multiple screenshots as images"
+  "chat_input_hint": "Multi-line input supported; paste multiple screenshots as images",
+  "tab_dating_chat": "💬 Chat Assistant",
+  "dating_title": "💬 Chat Assistant",
+  "dating_subtitle": "Select your role, chat stage, and enter the scene dialogue — AI will suggest follow-up replies",
+  "dating_gender_label": "Your Role",
+  "dating_gender_male": "Male",
+  "dating_gender_female": "Female",
+  "dating_stage_label": "Chat Stage",
+  "dating_stage_acquaintance": "Acquaintance",
+  "dating_stage_ambiguous": "Ambiguous",
+  "dating_stage_relationship": "Relationship",
+  "dating_scene_placeholder": "Enter the scene dialogue, e.g.:\nThem: What are you up to?\nMe: Just got off work, kinda tired\nThem: You've worked hard",
+  "dating_analyze_button": "💡 Get Suggestions",
+  "dating_thinking": "Generating suggestions…",
+  "dating_no_scene": "⚠️ Please enter the scene dialogue.",
+  "dating_result_title": "💡 Suggested Replies",
+  "dating_history_title": "💬 Chat Assistant History",
+  "dating_back": "↩️ Back"
 }

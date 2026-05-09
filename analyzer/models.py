@@ -98,3 +98,18 @@ class WriteRecord(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
+class DatingChatRecord(BaseModel):
+    """A persisted dating chat assistant record (maps to SQLite row)."""
+    model_config = ConfigDict(protected_namespaces=())
+
+    id: int | None = None
+    user_gender: str = ""  # "male" | "female"
+    chat_stage: str = ""  # "acquaintance" | "ambiguous" | "relationship"
+    scene_dialogue: str = ""
+    result: str = ""
+    language: str = "zh"
+    provider_name: str = ""
+    model_name: str = ""
+    created_at: datetime = Field(default_factory=datetime.now)
+
+

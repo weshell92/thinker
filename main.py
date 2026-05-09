@@ -25,7 +25,7 @@ if _PROJECT_ROOT not in sys.path:
 
 import config  # noqa: E402
 from analyzer.engine import ThinkerEngine  # noqa: E402
-from analyzer.models import AnalysisResult  # noqa: E402
+from analyzer.models import AnalysisResult, DatingChatRecord  # noqa: E402
 from analyzer.providers.openai_provider import OpenAIProvider, ProviderError  # noqa: E402
 from analyzer.providers.gemini_native_provider import GeminiNativeProvider  # noqa: E402
 from book.reader import (  # noqa: E402
@@ -1445,6 +1445,171 @@ def page_tts(lang: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tab 8: Dating Chat Assistant
+# ---------------------------------------------------------------------------
+
+_DATING_SYSTEM_PROMPT_ZH = """你是一位专业的恋爱与社交沟通顾问，深谙两性心理与不同关系阶段的沟通技巧。
+
+任务：根据用户提供的性别、聊天阶段和场景对话，给出高质量、高情商的后续回复建议。
+
+要求：
+1. 先简要分析当前对话的局势和对方的心理状态。
+2. 提供 2-3 条不同风格的建议回复（例如：温柔真诚型、幽默轻松型、直接坦诚型）。
+3. 每条回复需附带简短的适用场景说明，告诉用户在什么情况下使用这条回复最合适。
+4. 回复必须自然、得体，符合中文社交语境，避免过于油腻或生硬。
+5. 如果对话中存在潜在的风险（如对方情绪低落、误解、冷场等），请提前预警并给出化解建议。
+
+输出格式：使用清晰的中文 markdown 格式。"""
+
+_DATING_SYSTEM_PROMPT_EN = """You are a professional dating and social communication consultant with deep expertise in relationship psychology and communication skills across different stages.
+
+Task: Based on the user's gender, chat stage, and scene dialogue, provide high-quality, emotionally intelligent follow-up reply suggestions.
+
+Requirements:
+1. Briefly analyze the current conversation dynamics and the other person's psychological state.
+2. Provide 2-3 suggested replies in different styles (e.g., warm & sincere, humorous & light, direct & honest).
+3. Each reply should include a short note on when it is most appropriate to use.
+4. Replies must be natural, appropriate, and fit the social context. Avoid being overly cheesy or stiff.
+5. If there are potential risks in the conversation (e.g., the other person seems upset, misunderstandings, awkward silence), warn the user in advance and suggest how to defuse the situation.
+
+Output format: Use clear markdown formatting."""
+
+
+def _build_dating_user_prompt(user_gender: str, chat_stage: str, scene_dialogue: str, lang: str) -> str:
+    if lang == "zh":
+        gender_label = "男" if user_gender == "male" else "女"
+        stage_map = {
+            "acquaintance": "认识阶段",
+            "ambiguous": "暧昧阶段",
+            "relationship": "恋爱阶段",
+        }
+        stage_label = stage_map.get(chat_stage, chat_stage)
+        return f"""我的性别：{gender_label}
+当前关系阶段：{stage_label}
+
+场景对话：
+{scene_dialogue}
+
+请根据以上信息，为我提供后续的建议回复。"""
+    else:
+        gender_label = "Male" if user_gender == "male" else "Female"
+        stage_map = {
+            "acquaintance": "Getting to know each other",
+            "ambiguous": "Ambiguous / Flirting stage",
+            "relationship": "In a relationship",
+        }
+        stage_label = stage_map.get(chat_stage, chat_stage)
+        return f"""My gender: {gender_label}
+Current relationship stage: {stage_label}
+
+Scene dialogue:
+{scene_dialogue}
+
+Please provide follow-up reply suggestions based on the above information."""
+
+
+def page_dating_chat(lang: str, api_key: str, model: str, base_url: str, provider_name: str = "", is_native_gemini: bool = False) -> None:
+    """Render the Dating Chat Assistant page."""
+    st.header(t("dating_title", lang))
+    st.caption(t("dating_subtitle", lang))
+
+    db = get_db()
+
+    # ---- View a saved record ----
+    if st.session_state.get("view_dating_chat_record_id") is not None:
+        rec = db.get_dating_chat_record_by_id(st.session_state.view_dating_chat_record_id)
+        if rec:
+            st.info(f"💬 {rec.scene_dialogue[:80]}{'…' if len(rec.scene_dialogue) > 80 else ''}")
+            st.markdown("---")
+            st.markdown(f"**{t('dating_result_title', lang)}**")
+            st.markdown(rec.result)
+            _do_tts(rec.result, lang, btn_key=f"tts_dating_saved_{rec.id}")
+            if st.button(t("dating_back", lang), key="dating_back"):
+                st.session_state.view_dating_chat_record_id = None
+                st.rerun()
+            return
+        else:
+            st.session_state.view_dating_chat_record_id = None
+
+    # ---- Gender selection ----
+    gender_options = {
+        t("dating_gender_male", lang): "male",
+        t("dating_gender_female", lang): "female",
+    }
+    selected_gender_label = st.selectbox(
+        t("dating_gender_label", lang),
+        options=list(gender_options.keys()),
+        index=0,
+        key="dating_gender",
+    )
+    user_gender = gender_options[selected_gender_label]
+
+    # ---- Stage selection ----
+    stage_options = {
+        t("dating_stage_acquaintance", lang): "acquaintance",
+        t("dating_stage_ambiguous", lang): "ambiguous",
+        t("dating_stage_relationship", lang): "relationship",
+    }
+    selected_stage_label = st.selectbox(
+        t("dating_stage_label", lang),
+        options=list(stage_options.keys()),
+        index=0,
+        key="dating_stage",
+    )
+    chat_stage = stage_options[selected_stage_label]
+
+    # ---- Scene dialogue input ----
+    scene_dialogue = st.text_area(
+        t("dating_scene_placeholder", lang),
+        height=200,
+        key="dating_scene_dialogue",
+    )
+
+    if st.button(t("dating_analyze_button", lang), type="primary", key="dating_analyze_btn"):
+        if not api_key:
+            st.warning(t("error_no_key", lang))
+            return
+        if not scene_dialogue or not scene_dialogue.strip():
+            st.warning(t("dating_no_scene", lang))
+            return
+
+        provider = _make_provider(api_key, model, base_url, is_native_gemini)
+        system_prompt = _DATING_SYSTEM_PROMPT_ZH if lang == "zh" else _DATING_SYSTEM_PROMPT_EN
+        user_prompt = _build_dating_user_prompt(user_gender, chat_stage, scene_dialogue.strip(), lang)
+
+        with st.spinner(t("dating_thinking", lang)):
+            try:
+                result = provider.complete_text(system_prompt, user_prompt)
+            except ProviderError as exc:
+                error_code = str(exc)
+                if "QUOTA_EXCEEDED" in error_code:
+                    st.error(t("error_quota", lang, provider=provider_name))
+                elif "AUTH_ERROR" in error_code:
+                    st.error(t("error_auth", lang))
+                elif "CONTEXT_TOO_LONG" in error_code:
+                    st.error(t("error_context_too_long", lang))
+                elif "TIMEOUT" in error_code:
+                    st.warning(t("error_timeout", lang))
+                elif "RATE_LIMIT" in error_code:
+                    st.warning(t("error_rate_limit", lang))
+                else:
+                    st.error(t("error_analysis", lang, error=error_code))
+                return
+            except Exception as exc:
+                st.error(t("error_analysis", lang, error=str(exc)))
+                return
+
+        st.markdown(f"**{t('dating_result_title', lang)}**")
+        st.markdown(result)
+        _do_tts(result, lang, btn_key="tts_dating_result")
+        db.save_dating_chat_record(
+            user_gender, chat_stage, scene_dialogue.strip(), result, lang,
+            provider_name=provider_name, model_name=model,
+        )
+        st.toast(t("saved", lang))
+
+
+# ---------------------------------------------------------------------------
 # Main UI
 # ---------------------------------------------------------------------------
 
@@ -1464,6 +1629,8 @@ def main() -> None:
         st.session_state.view_gateway_qa_record_id = None
     if "view_write_record_id" not in st.session_state:
         st.session_state.view_write_record_id = None
+    if "view_dating_chat_record_id" not in st.session_state:
+        st.session_state.view_dating_chat_record_id = None
 
     # =================================================================
     # Sidebar
@@ -1497,6 +1664,10 @@ def main() -> None:
             "Google Gemini": {
                 "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
                 "models": [
+                    "gemini-3.1-flash-lite-preview",
+                    "gemini-3-flash-preview",
+                    "gemma-4-31b-it",
+                    "gemma-4-26b-a4b-it",
                     "aqa",
                     "deep-research-pro-preview-12-2025",
                     "gemini-2.0-flash",
@@ -1513,11 +1684,9 @@ def main() -> None:
                     "gemini-2.5-flash-preview-tts",
                     "gemini-2.5-pro",
                     "gemini-2.5-pro-preview-tts",
-                    "gemini-3-flash-preview",
                     "gemini-3-pro-image-preview",
                     "gemini-3-pro-preview",
                     "gemini-3.1-flash-image-preview",
-                    "gemini-3.1-flash-lite-preview",
                     "gemini-3.1-flash-live-preview",
                     "gemini-3.1-pro-preview",
                     "gemini-3.1-pro-preview-customtools",
@@ -1533,8 +1702,6 @@ def main() -> None:
                     "gemma-3-4b-it",
                     "gemma-3n-e2b-it",
                     "gemma-3n-e4b-it",
-                    "gemma-4-26b-a4b-it",
-                    "gemma-4-31b-it",
                     "imagen-4.0-fast-generate-001",
                     "imagen-4.0-generate-001",
                     "imagen-4.0-ultra-generate-001",
@@ -1744,6 +1911,7 @@ def main() -> None:
             "tab_chat": t("tab_chat", lang),
             "tab_tts": t("tab_tts", lang),
             "tab_write": t("tab_write", lang),
+            "tab_dating_chat": t("tab_dating_chat", lang),
         }
         with st.expander(t("tab_visibility_label", lang), expanded=False):
             st.caption(t("tab_visibility_help", lang))
@@ -1859,6 +2027,24 @@ def main() -> None:
                             db.delete_write_record(w_rec.id)  # type: ignore[arg-type]
                             st.rerun()
 
+        # ---- Dating Chat History ----
+        st.subheader(t("dating_history_title", lang))
+        dating_records = db.get_all_dating_chat_records(limit=30)
+        if not dating_records:
+            st.caption(t("history_empty", lang))
+        else:
+            with st.expander(f"💬 {t('dating_history_title', lang)} ({len(dating_records)})", expanded=False):
+                for d_rec in dating_records:
+                    d_label = d_rec.scene_dialogue[:35] + ("…" if len(d_rec.scene_dialogue) > 35 else "")
+                    col_d_btn, col_d_del = st.columns([4, 1])
+                    with col_d_btn:
+                        _pm = f" [{d_rec.provider_name}/{d_rec.model_name}]" if d_rec.model_name else ""
+                        if st.button(f"💬 {d_label}{_pm}", key=f"view_dating_{d_rec.id}"):
+                            st.session_state.view_dating_chat_record_id = d_rec.id
+                    with col_d_del:
+                        if st.button("🗑️", key=f"del_dating_{d_rec.id}"):
+                            db.delete_dating_chat_record(d_rec.id)  # type: ignore[arg-type]
+                            st.rerun()
 
     # =================================================================
     # Main area – Tabs (filtered by visibility settings)
@@ -1867,7 +2053,7 @@ def main() -> None:
     st.caption(t("app_subtitle", lang))
 
     _is_native_gemini = bool(preset_cfg.get("native_gemini"))
-    _visible = st.session_state.get("_visible_tabs", ["tab_analyze", "tab_read", "tab_qa", "tab_gateway", "tab_chat", "tab_tts", "tab_write"])
+    _visible = st.session_state.get("_visible_tabs", ["tab_analyze", "tab_read", "tab_qa", "tab_gateway", "tab_chat", "tab_tts", "tab_write", "tab_dating_chat"])
 
     # Build tab labels and keys for visible tabs only
     _TAB_REGISTRY = [
@@ -1878,6 +2064,7 @@ def main() -> None:
         ("tab_chat", t("tab_chat", lang)),
         ("tab_tts", t("tab_tts", lang)),
         ("tab_write", t("tab_write", lang)),
+        ("tab_dating_chat", t("tab_dating_chat", lang)),
     ]
     _shown = [(k, lbl) for k, lbl in _TAB_REGISTRY if k in _visible]
     if not _shown:
@@ -1913,6 +2100,10 @@ def main() -> None:
     if "tab_write" in _tab_map:
         with _tab_map["tab_write"]:
             page_write(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
+
+    if "tab_dating_chat" in _tab_map:
+        with _tab_map["tab_dating_chat"]:
+            page_dating_chat(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
 
 
 if __name__ == "__main__":

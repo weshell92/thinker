@@ -137,5 +137,22 @@
   "paste_image_count": "📋 已粘贴 {n} 张截图",
   "paste_image_delete": "🗑️ 删除",
   "paste_image_clear_all": "🗑️ 清空所有截图",
-  "chat_input_hint": "支持多行输入，可多次粘贴截图作为图片发送"
+  "chat_input_hint": "支持多行输入，可多次粘贴截图作为图片发送",
+  "tab_dating_chat": "💬 聊天助手",
+  "dating_title": "💬 聊天助手",
+  "dating_subtitle": "选择你的角色、聊天阶段，输入场景对话，AI 为你提供后续建议回复",
+  "dating_gender_label": "你的角色",
+  "dating_gender_male": "男",
+  "dating_gender_female": "女",
+  "dating_stage_label": "聊天阶段",
+  "dating_stage_acquaintance": "认识",
+  "dating_stage_ambiguous": "暧昧",
+  "dating_stage_relationship": "恋爱",
+  "dating_scene_placeholder": "请输入场景对话，例如：\n对方：在干嘛呢？\n我：刚下班，有点累\n对方：辛苦啦",
+  "dating_analyze_button": "💡 获取建议",
+  "dating_thinking": "正在生成建议…",
+  "dating_no_scene": "⚠️ 请输入场景对话。",
+  "dating_result_title": "💡 建议回复",
+  "dating_history_title": "💬 聊天助手记录",
+  "dating_back": "↩️ 返回"
 }

@@ -8,7 +8,7 @@ import sqlite3
 from datetime import datetime
 from typing import List, Optional
 
-from analyzer.models import AnalysisRecord, AnalysisResult, ChatRecord, GatewayQARecord, QARecord, WriteRecord
+from analyzer.models import AnalysisRecord, AnalysisResult, ChatRecord, DatingChatRecord, GatewayQARecord, QARecord, WriteRecord
 
 _CREATE_TABLE_SQL = """\
 CREATE TABLE IF NOT EXISTS analysis_history (
@@ -79,6 +79,20 @@ CREATE TABLE IF NOT EXISTS write_history (
 );
 """
 
+_CREATE_DATING_CHAT_TABLE_SQL = """\
+CREATE TABLE IF NOT EXISTS dating_chat_history (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_gender    TEXT    NOT NULL DEFAULT '',
+    chat_stage     TEXT    NOT NULL DEFAULT '',
+    scene_dialogue TEXT    NOT NULL,
+    result         TEXT    NOT NULL,
+    language       TEXT    NOT NULL DEFAULT 'zh',
+    provider_name  TEXT    NOT NULL DEFAULT '',
+    model_name     TEXT    NOT NULL DEFAULT '',
+    created_at     TEXT    NOT NULL
+);
+"""
+
 
 class Database:
     """Thin wrapper around SQLite for analysis history CRUD."""
@@ -105,8 +119,9 @@ class Database:
             conn.execute(_CREATE_CHAT_TABLE_SQL)
             conn.execute(_CREATE_GATEWAY_QA_TABLE_SQL)
             conn.execute(_CREATE_WRITE_TABLE_SQL)
+            conn.execute(_CREATE_DATING_CHAT_TABLE_SQL)
             # Migrate: add provider_name/model_name columns if missing
-            for table in ("analysis_history", "qa_history", "chat_history", "gateway_qa_history", "write_history"):
+            for table in ("analysis_history", "qa_history", "chat_history", "gateway_qa_history", "write_history", "dating_chat_history"):
                 for col in ("provider_name", "model_name"):
                     try:
                         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
@@ -432,6 +447,73 @@ class Database:
             input_text=row["input_text"],
             result=row["result"],
             action_type=row["action_type"],
+            language=row["language"],
+            provider_name=row["provider_name"] if "provider_name" in row.keys() else "",
+            model_name=row["model_name"] if "model_name" in row.keys() else "",
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    # ------------------------------------------------------------------
+    # Dating Chat CRUD
+    # ------------------------------------------------------------------
+
+    def save_dating_chat_record(
+        self,
+        user_gender: str,
+        chat_stage: str,
+        scene_dialogue: str,
+        result: str,
+        language: str,
+        provider_name: str = "",
+        model_name: str = "",
+    ) -> int:
+        """Insert a new dating chat record. Returns the new row id."""
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO dating_chat_history (user_gender, chat_stage, scene_dialogue, result, language, provider_name, model_name, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_gender, chat_stage, scene_dialogue, result, language, provider_name, model_name, now),
+            )
+            return cursor.lastrowid  # type: ignore[return-value]
+
+    def get_all_dating_chat_records(self, limit: int = 50) -> List[DatingChatRecord]:
+        """Return the most recent dating chat records (newest first)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM dating_chat_history ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [self._row_to_dating_chat_record(r) for r in rows]
+
+    def get_dating_chat_record_by_id(self, record_id: int) -> Optional[DatingChatRecord]:
+        """Fetch a single dating chat record by primary key."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM dating_chat_history WHERE id = ?",
+                (record_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_dating_chat_record(row)
+
+    def delete_dating_chat_record(self, record_id: int) -> bool:
+        """Delete a dating chat record."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM dating_chat_history WHERE id = ?",
+                (record_id,),
+            )
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def _row_to_dating_chat_record(row: sqlite3.Row) -> DatingChatRecord:
+        return DatingChatRecord(
+            id=row["id"],
+            user_gender=row["user_gender"],
+            chat_stage=row["chat_stage"],
+            scene_dialogue=row["scene_dialogue"],
+            result=row["result"],
             language=row["language"],
             provider_name=row["provider_name"] if "provider_name" in row.keys() else "",
             model_name=row["model_name"] if "model_name" in row.keys() else "",
