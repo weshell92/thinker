@@ -348,6 +348,415 @@ Rules:
 5. End your answer with "📌 Related chapters" listing the relevant chapter names."""
 
 
+# ---------------------------------------------------------------------------
+# Deep Reading Prompts (derived from 深度阅读Prompt合集.md)
+# ---------------------------------------------------------------------------
+
+_QA_DEEP_READ_PROMPTS_ZH: dict[str, str] = {
+    "screen": """你是一位专业的选书顾问。用户想知道一本书是否值得读。
+
+请针对《{book_name}》从以下8个维度给出结构化分析：
+1. 这本书的核心价值是什么？
+2. 为什么它出名？
+3. 哪些内容最值得读？
+4. 哪些内容可以跳过？
+5. 适合什么人？不适合什么人？
+6. 如果只花1小时阅读，应该重点看哪里？
+7. 这本书属于「信息型 / 思维型 / 方法型 / 情绪型 / 营销型」中的哪一种？
+8. 这本书是真有深度，还是"包装得很聪明"？
+
+要求：用清晰、有条理的中文回答。每个维度用小标题分隔。""",
+
+    "global": """你是一位深度阅读教练。用户想建立对一本书的全局理解。
+
+请针对《{book_name}》回答以下问题，帮助用户建立全局地图：
+1. 这本书真正想解决什么问题？
+2. 作者最核心的一句话是什么？
+3. 整本书的逻辑结构是什么？（请用层级或导图形式描述）
+
+要求：用清晰、有条理的中文回答。先给整体结论，再分点展开。""",
+
+    "core": """你是一位深度阅读教练。用户想提炼一本书的核心观点与底层逻辑。
+
+请针对《{book_name}》从以下维度进行分析：
+
+【核心观点】
+4. 提炼最重要的5~7个观点
+5. 每个观点的推理过程是什么？
+6. 哪个观点最重要？为什么？
+7. 观点之间是什么关系？哪个是根，哪个是枝叶？
+
+【底层逻辑】
+8. 作者默认哪些前提成立？
+9. 作者的世界观、假设、价值观是什么？
+10. 作者对「人性 / 社会 / 商业」的根本看法是什么？
+11. 他默认"什么是真的"？
+
+要求：用清晰、有条理的中文回答。每个观点单独成段，底层逻辑单独成章。""",
+
+    "apply": """你是一位深度阅读教练。用户想理解书中的推理模型与现实应用。
+
+请针对《{book_name}》从以下维度进行分析：
+
+【推理与模型】
+12. 作者是如何一步步推导出结论的？中间有没有逻辑跳跃？
+13. 提炼书中的思维模型、公式、框架、决策方法。
+
+【现实应用】
+14. 现实中如何使用？哪些场景特别有效？哪些场景会失败？
+15. 生活怎么用 / 工作怎么用 / 商业怎么用 / 人际关系怎么用？
+
+要求：用清晰、有条理的中文回答。思维模型请用条目化列出，现实应用请分场景说明。""",
+
+    "chapter": """你是一位深度阅读教练。用户想精读一本书的某一章。
+
+请针对《{book_name}》的「{mode_detail}」进行章节拆解，输出以下内容：
+1. 本章核心问题
+2. 作者观点
+3. 推理链
+4. 关键概念
+5. 最重要的一句话
+6. 现实案例
+7. 作者隐藏假设
+8. 可能错误
+9. 如何实际应用
+10. 用普通人能听懂的话重新解释
+
+要求：用清晰、有条理的中文回答。每个维度用小标题分隔。""",
+
+    "by_type_philosophy": """你是一位哲学阅读专家。用户想真正理解一本哲学书的思想，不要学术化。
+
+请针对《{book_name}》回答：
+1. 作者到底在思考什么问题？为什么这个问题重要？
+2. 作者如何推导？
+3. 与其他哲学家有什么区别？
+4. 对现实人生有什么影响？
+5. 普通人最容易误解哪里？
+6. 如果真正理解，会如何改变一个人的生活？
+
+要求：用普通人能听懂的中文回答，避免过度学术化术语。""",
+
+    "by_type_psychology": """你是一位心理学阅读专家。用户想分析一本心理学著作的核心。
+
+请针对《{book_name}》回答：
+1. 人性的核心机制
+2. 情绪运作方式
+3. 行为模式
+4. 潜意识影响
+5. 常见认知偏差
+6. 如何识别 / 如何改善
+7. 现实案例
+8. 容易被误用的地方
+
+要求：用清晰、有条理的中文回答。理论与现实案例结合。""",
+
+    "by_type_business": """你是一位商业实战阅读专家。用户想从商业实战角度拆解一本书。
+
+请针对《{book_name}》回答：
+1. 真正赚钱的逻辑
+2. 商业模式
+3. 用户心理
+4. 竞争优势
+5. 流量逻辑
+6. 杠杆点
+7. 风险
+8. 哪些适合普通人 / 哪些只是幸存者案例
+9. 如何低风险实践
+
+要求：用清晰、有条理的中文回答。突出"实战"和"可落地"。""",
+
+    "by_type_novel": """你是一位文学分析专家。用户想深度分析一本小说/文学作品，不要只讲剧情。
+
+请针对《{book_name}》回答：
+1. 作者真正想表达什么？
+2. 人物象征什么？故事隐喻什么？
+3. 冲突背后的本质是什么？
+4. 哪个人物最接近作者自己？
+5. 作者对人性的看法是什么？
+6. 为什么这个故事会打动人？
+7. 如果放到现实世界意味着什么？
+
+要求：用清晰、有条理的中文回答。分析要深入，不要停留在剧情复述。""",
+
+    "by_type_growth": """你是一位成长类书籍拆解专家。用户想"拆机器"一样拆解一本成长/思维类书籍。
+
+请针对《{book_name}》输出：
+- 输入条件
+- 核心机制
+- 运转逻辑
+- 输出结果
+- 成功条件 / 失败条件
+- 副作用 / 被滥用后的风险
+
+最后：用系统图方式描述整本书。
+
+要求：用清晰、有条理的中文回答。用条目和系统图帮助用户建立结构性理解。""",
+
+    "critical": """你是一位批判性思维专家。请专门寻找《{book_name}》中的漏洞和局限。
+
+请从以下维度进行分析：
+1. 作者最脆弱的逻辑 / 最大的逻辑漏洞
+2. 被忽略的数据 / 缺乏证据的地方
+3. 幸存者偏差
+4. 时代局限 / 哪些观点现在已经过时
+5. 情绪化论证 / 情绪大于事实的地方
+6. 偷换概念 / 因果倒置
+7. 哪些结论并不普适
+
+最后判断：
+- 这本书哪些部分可信？
+- 哪些部分只能"参考"？
+
+要求：用清晰、有条理的中文回答。批判要具体，不要泛泛而谈。""",
+
+    "practice": """你是一位行动学习教练。用户想把《{book_name}》从理论转化为能力。
+
+请把这本书转化成以下实战系统：
+1. 可执行动作 / 日常训练 / 行动习惯
+2. 每日训练
+3. 检查清单
+4. 决策流程 / 决策模板
+5. 现实对话模板
+6. 错误警报机制 / 风险提醒
+7. 常见错误
+8. 现实演练任务
+
+最后回答：如果一个人真的彻底理解了这本书，他会怎么看世界？会如何决策？和普通人最大的区别是什么？
+
+要求：用清晰、有条理的中文回答。突出"可执行"和"可训练"。""",
+
+    "advanced": """你是一位高阶阅读教练。用户想通过五轮进阶法彻底读透《{book_name}》。
+
+当前轮次：{mode_detail}
+
+请按以下对应轮次的要求输出：
+- 第1轮（建立全局地图）：给我这本书的"思维地图"。
+- 第2轮（抓核心）：哪20%内容最重要？核心章节是第几章？这章为什么是全书核心？
+- 第3轮（攻击作者）：如果反对作者，最强反驳是什么？如果你是作者的敌人，你会如何反驳他？
+- 第4轮（现实化）：现实世界中，哪些公司 / 人物正在使用这套思想？
+- 第5轮（训练化）：帮我设计7天训练计划，让我真正掌握它。
+
+要求：用清晰、有条理的中文回答。只输出当前轮次对应的内容。""",
+
+    "cheat": """你是一位高效阅读专家。用户想要一本书的压缩速查版。
+
+请针对《{book_name}》进行分析：
+- 作者的核心问题
+- 底层假设
+- 推理链
+- 关键模型
+- 现实应用
+- 局限性
+- 反对观点
+
+最终目标：把它转化成用户可以实际使用的能力。让用户拥有作者的思考能力，而不只是记住内容。
+
+要求：用极度精炼但结构清晰的中文回答。适合打印出来贴在书桌前随时查阅。""",
+}
+
+_QA_DEEP_READ_PROMPTS_EN: dict[str, str] = {
+    "screen": '''You are a professional book screening advisor. The user wants to know if a book is worth reading.
+
+Please analyze "{book_name}" across the following 8 dimensions:
+1. What is the core value of this book?
+2. Why is it famous?
+3. Which parts are most worth reading?
+4. Which parts can be skipped?
+5. Who is it suitable for? Who is it NOT suitable for?
+6. If you only have 1 hour to read, where should you focus?
+7. Which type does this book belong to: Informational / Mindset / Methodological / Emotional / Marketing?
+8. Is this book genuinely deep, or just "cleverly packaged"?
+
+Requirements: Answer in clear, well-structured English. Use subheadings for each dimension.''',
+
+    "global": '''You are a deep-reading coach. The user wants to build a global understanding of a book.
+
+Please answer the following about "{book_name}" to help the user build a mental map:
+1. What problem does this book really try to solve?
+2. What is the author's single most core sentence?
+3. What is the logical structure of the entire book? (Describe it hierarchically or as a mind map.)
+
+Requirements: Answer in clear, well-structured English. Start with an overall conclusion, then expand point by point.''',
+
+    "core": '''You are a deep-reading coach. The user wants to extract the core ideas and underlying logic of a book.
+
+Please analyze "{book_name}" across these dimensions:
+
+[Core Ideas]
+4. Extract the 5~7 most important ideas.
+5. What is the reasoning process for each idea?
+6. Which idea is the most important? Why?
+7. What is the relationship between the ideas? Which is the root and which are the branches?
+
+[Underlying Logic]
+8. What premises does the author assume to be true?
+9. What is the author's worldview, assumptions, and values?
+10. What is the author's fundamental view on "human nature / society / business"?
+11. What does the author assume to be "true"?
+
+Requirements: Answer in clear, well-structured English. Each idea gets its own paragraph; underlying logic gets its own section.''',
+
+    "apply": '''You are a deep-reading coach. The user wants to understand the reasoning models and real-world applications of a book.
+
+Please analyze "{book_name}" across these dimensions:
+
+[Reasoning & Models]
+12. How does the author derive conclusions step by step? Are there logical leaps?
+13. Extract the mental models, formulas, frameworks, and decision-making methods from the book.
+
+[Real-World Application]
+14. How can this be used in reality? Which scenarios work especially well? Which scenarios will fail?
+15. How to use it in life / work / business / relationships?
+
+Requirements: Answer in clear, well-structured English. List mental models as bullet points; explain applications by scenario.''',
+
+    "chapter": '''You are a deep-reading coach. The user wants to intensively read a single chapter of a book.
+
+Please deconstruct the chapter "{mode_detail}" of "{book_name}" and output:
+1. Core problem of this chapter
+2. Author's viewpoint
+3. Reasoning chain
+4. Key concepts
+5. The single most important sentence
+6. Real-world cases
+7. Author's hidden assumptions
+8. Possible errors
+9. How to apply practically
+10. Re-explain in plain language that ordinary people can understand
+
+Requirements: Answer in clear, well-structured English. Use subheadings for each dimension.''',
+
+    "by_type_philosophy": '''You are a philosophy reading expert. The user wants to truly understand the philosophical ideas of a book, without academic jargon.
+
+Please answer about "{book_name}":
+1. What problem is the author really thinking about? Why does it matter?
+2. How does the author reason?
+3. How is this author different from other philosophers?
+4. What impact does it have on real life?
+5. What do ordinary people most easily misunderstand?
+6. If truly understood, how would it change a person's life?
+
+Requirements: Answer in plain English that ordinary people can understand. Avoid excessive academic terminology.''',
+
+    "by_type_psychology": '''You are a psychology reading expert. The user wants to analyze the core of a psychology book.
+
+Please answer about "{book_name}":
+1. Core mechanisms of human nature
+2. How emotions operate
+3. Behavioral patterns
+4. Subconscious influences
+5. Common cognitive biases
+6. How to recognize / how to improve
+7. Real-world cases
+8. Places where the ideas are easily misused
+
+Requirements: Answer in clear, well-structured English. Combine theory with real-world cases.''',
+
+    "by_type_business": '''You are a business-practice reading expert. The user wants to deconstruct a book from a business battle perspective.
+
+Please answer about "{book_name}":
+1. The real logic of making money
+2. Business model
+3. User psychology
+4. Competitive advantages
+5. Traffic logic
+6. Leverage points
+7. Risks
+8. What is suitable for ordinary people / what is just survivor bias
+9. How to practice with low risk
+
+Requirements: Answer in clear, well-structured English. Emphasize "practical" and 'actionable'.''',
+
+    "by_type_novel": '''You are a literary analysis expert. The user wants a deep analysis of a novel/literary work—don't just recount the plot.
+
+Please answer about "{book_name}":
+1. What does the author really want to express?
+2. What do the characters symbolize? What does the story metaphorize?
+3. What is the essence behind the conflict?
+4. Which character is closest to the author themselves?
+5. What is the author's view of human nature?
+6. Why does this story move people?
+7. What would it mean if placed in the real world?
+
+Requirements: Answer in clear, well-structured English. The analysis must be deep, not just a plot summary.''',
+
+    "by_type_growth": '''You are a growth-book deconstruction expert. The user wants to deconstruct a growth/mindset book like "disassembling a machine."
+
+Please output for "{book_name}":
+- Input conditions
+- Core mechanism
+- Operating logic
+- Output results
+- Success conditions / failure conditions
+- Side effects / risks after misuse
+
+Finally: Describe the whole book as a system diagram.
+
+Requirements: Answer in clear, well-structured English. Use bullet points and a system diagram to help the user build structural understanding.''',
+
+    "critical": '''You are a critical-thinking expert. Please specifically hunt for flaws and limitations in "{book_name}."
+
+Please analyze across these dimensions:
+1. The author's weakest logic / biggest logical hole
+2. Ignored data / places lacking evidence
+3. Survivorship bias
+4. Era limitations / which views are now outdated
+5. Emotional arguments / where emotion outweighs facts
+6. Concept switching / reversed causality
+7. Which conclusions are not universally applicable
+
+Final judgment:
+- Which parts of this book are credible?
+- Which parts can only be "referenced"?
+
+Requirements: Answer in clear, well-structured English. Critiques must be specific, not vague.''',
+
+    "practice": '''You are an action-learning coach. The user wants to turn "{book_name}" from theory into capability.
+
+Please convert this book into the following practical system:
+1. Executable actions / daily drills / action habits
+2. Daily training
+3. Checklist
+4. Decision process / decision template
+5. Real-world dialogue template
+6. Error alert mechanism / risk reminders
+7. Common mistakes
+8. Real-world practice tasks
+
+Finally answer: If someone truly thoroughly understood this book, how would they see the world? How would they make decisions? What is the biggest difference from ordinary people?
+
+Requirements: Answer in clear, well-structured English. Emphasize "executable" and 'trainable'.''',
+
+    "advanced": '''You are an advanced reading coach. The user wants to thoroughly master "{book_name}" through the five-round advanced method.
+
+Current round: {mode_detail}
+
+Please output according to the corresponding round below:
+- Round 1 (Build Global Map): Give me the "mind map" of this book.
+- Round 2 (Capture Core): Which 20% of content is most important? Which chapter is the core chapter? Why is this chapter the core of the book?
+- Round 3 (Attack Author): If opposing the author, what is the strongest rebuttal? If you were the author's enemy, how would you refute them?
+- Round 4 (Real-World Context): In the real world, which companies / people are using this set of ideas?
+- Round 5 (Training Plan): Help me design a 7-day training plan to truly master it.
+
+Requirements: Answer in clear, well-structured English. Only output the content corresponding to the current round.''',
+
+    "cheat": '''You are an efficient reading expert. The user wants a compressed cheat-sheet version of a book.
+
+Please analyze "{book_name}":
+- Author's core problem
+- Underlying assumptions
+- Reasoning chain
+- Key models
+- Real-world applications
+- Limitations
+- Opposing views
+
+Final goal: Convert it into a capability the user can actually use. Let the user possess the author's thinking ability, not just memorize content.
+
+Requirements: Answer in extremely concise but clearly structured English. Suitable for printing and posting on a desk for quick reference.''',
+}
+
+
 def _build_qa_user_prompt(question: str, book_name: str, lang: str) -> str:
     if lang == "zh":
         return f"""书名：《{book_name}》
@@ -363,8 +772,49 @@ My question: {question}
 Please answer based on your knowledge of this book."""
 
 
+def _build_deep_read_prompt(
+    mode: str,
+    book_name: str,
+    mode_detail: str,
+    user_question: str,
+    lang: str,
+) -> tuple[str, str]:
+    """Build (system_prompt, user_prompt) for deep reading modes.
+
+    Parameters
+    ----------
+    mode:
+        Reading mode key, e.g. "screen", "global", "chapter", ...
+    book_name:
+        Book title.
+    mode_detail:
+        Chapter name, book type, or advanced round.
+    user_question:
+        Additional user question (may be empty).
+    lang:
+        "zh" or "en".
+
+    Returns
+    -------
+    (system_prompt, user_prompt)
+    """
+    prompts = _QA_DEEP_READ_PROMPTS_ZH if lang == "zh" else _QA_DEEP_READ_PROMPTS_EN
+    system_prompt = prompts.get(mode, prompts["screen"])
+    system_prompt = system_prompt.format(book_name=book_name, mode_detail=mode_detail)
+
+    if user_question and user_question.strip():
+        if lang == "zh":
+            user_prompt = f"补充说明 / 用户的额外问题：{user_question.strip()}"
+        else:
+            user_prompt = f"Additional note / user's extra question: {user_question.strip()}"
+    else:
+        user_prompt = ""
+
+    return system_prompt, user_prompt
+
+
 def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: str = "", is_native_gemini: bool = False) -> None:
-    """Render the Book Q&A page."""
+    """Render the Book Q&A page with deep reading modes."""
     st.header(t("qa_title", lang))
     st.caption(t("qa_subtitle", lang))
 
@@ -387,37 +837,143 @@ def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: s
         else:
             st.session_state.view_qa_record_id = None
 
-    # Book name input (default to Beyond Feelings)
+    # ------------------------------------------------------------------
+    # ① Top info area
+    # ------------------------------------------------------------------
     book_name = st.text_input(
         t("qa_book_name", lang),
         value="Beyond Feelings: A Guide to Critical Thinking",
         key="qa_book_name",
     )
 
-    # Question input
-    question = st.text_input(
+    # Mode selector
+    _MODE_KEYS = [
+        ("free", "qa_mode_free"),
+        ("screen", "qa_mode_screen"),
+        ("global", "qa_mode_global"),
+        ("core", "qa_mode_core"),
+        ("apply", "qa_mode_apply"),
+        ("chapter", "qa_mode_chapter"),
+        ("by_type", "qa_mode_by_type"),
+        ("critical", "qa_mode_critical"),
+        ("practice", "qa_mode_practice"),
+        ("advanced", "qa_mode_advanced"),
+        ("cheat", "qa_mode_cheat"),
+    ]
+    mode_labels = [t(label_key, lang) for _key, label_key in _MODE_KEYS]
+    mode_map = {t(label_key, lang): _key for _key, label_key in _MODE_KEYS}
+    selected_mode_label = st.selectbox(
+        t("qa_mode_label", lang),
+        options=mode_labels,
+        index=0,
+        key="qa_mode_select",
+    )
+    mode = mode_map[selected_mode_label]
+
+    # ------------------------------------------------------------------
+    # ② Conditional config area
+    # ------------------------------------------------------------------
+    mode_detail = ""
+    if mode == "chapter":
+        mode_detail = st.text_input(
+            t("qa_chapter_label", lang),
+            placeholder="第3章 / Chapter 3" if lang == "zh" else "Chapter 3",
+            key="qa_chapter_input",
+        )
+    elif mode == "by_type":
+        _TYPE_KEYS = [
+            ("by_type_philosophy", "qa_book_type_philosophy"),
+            ("by_type_psychology", "qa_book_type_psychology"),
+            ("by_type_business", "qa_book_type_business"),
+            ("by_type_novel", "qa_book_type_novel"),
+            ("by_type_growth", "qa_book_type_growth"),
+        ]
+        type_labels = [t(label_key, lang) for _key, label_key in _TYPE_KEYS]
+        type_map = {t(label_key, lang): _key for _key, label_key in _TYPE_KEYS}
+        selected_type_label = st.selectbox(
+            t("qa_book_type_label", lang),
+            options=type_labels,
+            index=0,
+            key="qa_book_type_select",
+        )
+        mode = type_map[selected_type_label]  # overwrite mode with concrete type
+    elif mode == "advanced":
+        _ROUND_KEYS = [
+            ("qa_round_1", "qa_round_1"),
+            ("qa_round_2", "qa_round_2"),
+            ("qa_round_3", "qa_round_3"),
+            ("qa_round_4", "qa_round_4"),
+            ("qa_round_5", "qa_round_5"),
+        ]
+        round_labels = [t(label_key, lang) for label_key, _ in _ROUND_KEYS]
+        round_map = {t(label_key, lang): label_key for label_key, _ in _ROUND_KEYS}
+        selected_round_label = st.selectbox(
+            t("qa_round_label", lang),
+            options=round_labels,
+            index=0,
+            key="qa_round_select",
+        )
+        mode_detail = t(round_map[selected_round_label], lang)
+
+    # ------------------------------------------------------------------
+    # ③ Question input area (dynamic placeholder)
+    # ------------------------------------------------------------------
+    _base_mode = mode.replace('by_type_', '')
+    if _base_mode != mode:  # was a by_type mode
+        _base_mode = 'by_type'
+    placeholder_key = f"qa_placeholder_{_base_mode}"
+    # Fallback chain: specific mode -> by_type -> free
+    if placeholder_key not in _I18N_CACHE.get(lang, {}):
+        # Load fresh if not cached
+        if lang not in _I18N_CACHE:
+            i18n_path = os.path.join(_PROJECT_ROOT, "i18n", f"{lang}.json")
+            with open(i18n_path, "r", encoding="utf-8") as fh:
+                _I18N_CACHE[lang] = json.load(fh)
+    placeholder_text = _I18N_CACHE.get(lang, {}).get(placeholder_key, "")
+    if not placeholder_text:
+        placeholder_text = _I18N_CACHE.get(lang, {}).get("qa_placeholder_by_type", t("qa_placeholder_free", lang))
+
+    question = st.text_area(
         t("qa_input_placeholder", lang),
+        height=120,
+        placeholder=placeholder_text,
         key="qa_question",
     )
 
-    # Chat history
+    # ------------------------------------------------------------------
+    # Chat history init (must be before button click)
+    # ------------------------------------------------------------------
     if "qa_history" not in st.session_state:
         st.session_state.qa_history = []
 
-    if st.button(t("qa_ask_button", lang), type="primary"):
+    # ------------------------------------------------------------------
+    # ④ Execution area
+    # ------------------------------------------------------------------
+    if st.button(t("qa_deep_read_button", lang), type="primary", key="qa_ask"):
         if not api_key:
             st.warning(t("error_no_key", lang))
             return
         if not book_name or not book_name.strip():
             st.warning(t("qa_no_book_name", lang))
             return
-        if not question or not question.strip():
+        if mode == "free" and (not question or not question.strip()):
             st.warning(t("qa_no_question", lang))
             return
 
         with st.spinner(t("qa_thinking", lang)):
-            system_prompt = _QA_SYSTEM_PROMPT_ZH if lang == "zh" else _QA_SYSTEM_PROMPT_EN
-            user_prompt = _build_qa_user_prompt(question.strip(), book_name.strip(), lang)
+            if mode == "free":
+                system_prompt = _QA_SYSTEM_PROMPT_ZH if lang == "zh" else _QA_SYSTEM_PROMPT_EN
+                user_prompt = _build_qa_user_prompt(
+                    (question or "").strip(), book_name.strip(), lang
+                )
+            else:
+                system_prompt, user_prompt = _build_deep_read_prompt(
+                    mode=mode,
+                    book_name=book_name.strip(),
+                    mode_detail=mode_detail,
+                    user_question=(question or "").strip(),
+                    lang=lang,
+                )
 
             provider = _make_provider(api_key, model, base_url, is_native_gemini)
 
@@ -444,18 +1000,31 @@ def page_qa(lang: str, api_key: str, model: str, base_url: str, provider_name: s
                 st.error(t("error_analysis", lang, error=str(exc)))
                 return
 
+        # Persisted question includes mode tag for history readability
+        mode_tag = f"[{selected_mode_label}] " if mode != "free" else ""
+        persisted_question = mode_tag + (question or "").strip()
+        if not persisted_question.strip():
+            persisted_question = selected_mode_label
+
         # Append to session history
         st.session_state.qa_history.append({
-            "question": question.strip(),
+            "question": persisted_question,
             "answer": answer,
             "book": book_name.strip(),
         })
 
         # Persist to database
         db = get_db()
-        db.save_qa_record(book_name.strip(), question.strip(), answer, lang,
+        db.save_qa_record(book_name.strip(), persisted_question, answer, lang,
                           provider_name=provider_name, model_name=model)
         st.toast(t("saved", lang))
+
+        # Show result with mode tag
+        st.markdown("---")
+        st.caption(f"🏷️ {t('qa_mode_tag', lang)}：{selected_mode_label}")
+        st.markdown(f"**{t('qa_answer_title', lang)}**")
+        st.markdown(answer)
+        _do_tts(answer, lang, btn_key="tts_qa_result")
 
     # Render history grouped by book (newest first)
     if st.session_state.qa_history:
