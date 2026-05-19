@@ -2048,6 +2048,7 @@ def _build_dating_user_prompt(user_gender: str, chat_stage: str, scene_dialogue:
     if lang == "zh":
         gender_label = "男" if user_gender == "male" else "女"
         stage_map = {
+            "online_chat": "网聊阶段",
             "acquaintance": "认识阶段",
             "ambiguous": "暧昧阶段",
             "relationship": "恋爱阶段",
@@ -2063,6 +2064,7 @@ def _build_dating_user_prompt(user_gender: str, chat_stage: str, scene_dialogue:
     else:
         gender_label = "Male" if user_gender == "male" else "Female"
         stage_map = {
+            "online_chat": "Online Chat stage",
             "acquaintance": "Getting to know each other",
             "ambiguous": "Ambiguous / Flirting stage",
             "relationship": "In a relationship",
@@ -2115,6 +2117,7 @@ def page_dating_chat(lang: str, api_key: str, model: str, base_url: str, provide
 
     # ---- Stage selection ----
     stage_options = {
+        t("dating_stage_online_chat", lang): "online_chat",
         t("dating_stage_acquaintance", lang): "acquaintance",
         t("dating_stage_ambiguous", lang): "ambiguous",
         t("dating_stage_relationship", lang): "relationship",
@@ -2134,21 +2137,107 @@ def page_dating_chat(lang: str, api_key: str, model: str, base_url: str, provide
         key="dating_scene_dialogue",
     )
 
+    # ---- File uploader (images & text files) ----
+    uploaded_files = st.file_uploader(
+        t("dating_upload_label", lang),
+        type=["png", "jpg", "jpeg", "gif", "webp", "txt", "md"],
+        help=t("dating_upload_help", lang),
+        key="dating_file_uploader",
+        accept_multiple_files=True,
+    )
+
+    all_file_texts: list[str] = []
+    all_image_data_uris: list[tuple[str, str]] = []  # (filename, data_uri)
+    for _uf in (uploaded_files or []):
+        if _is_image_file(_uf.name):
+            all_image_data_uris.append((_uf.name, _encode_image_base64(_uf)))
+        else:
+            try:
+                all_file_texts.append(_extract_file_text(_uf))
+            except ValueError as _exc:
+                st.warning(str(_exc))
+
+    # ---- Clipboard paste for screenshots ----
+    from streamlit_paste_button import paste_image_button as _paste_btn
+
+    if "dating_pasted_images" not in st.session_state:
+        st.session_state.dating_pasted_images = []
+    if "dating_last_paste_hash" not in st.session_state:
+        st.session_state.dating_last_paste_hash = None
+
+    _dating_paste_result = _paste_btn(
+        label=t("dating_paste_button", lang),
+        key="dating_paste_image",
+    )
+    if _dating_paste_result and _dating_paste_result.image_data:
+        import hashlib as _hl
+        _pasted_data_uri = _encode_pil_image_base64(_dating_paste_result.image_data)
+        _paste_hash = _hl.md5(_pasted_data_uri.encode()).hexdigest()
+        if _paste_hash != st.session_state.dating_last_paste_hash:
+            st.session_state.dating_last_paste_hash = _paste_hash
+            _n = len(st.session_state.dating_pasted_images) + 1
+            st.session_state.dating_pasted_images.append((f"clipboard_paste_{_n}.png", _pasted_data_uri))
+            st.toast(t("paste_image_loaded", lang, n=str(_n)))
+
+    if st.session_state.dating_pasted_images:
+        st.info(t("paste_image_count", lang, n=str(len(st.session_state.dating_pasted_images))))
+        _dating_del_indices: list[int] = []
+        for _i, (_pname, _puri) in enumerate(st.session_state.dating_pasted_images):
+            _img_col, _del_col = st.columns([4, 1])
+            with _img_col:
+                import base64 as _b64
+                _raw = _b64.b64decode(_puri.split(",", 1)[1])
+                st.image(_raw, caption=_pname, width=200)
+            with _del_col:
+                if st.button(t("paste_image_delete", lang), key=f"dating_paste_del_{_i}"):
+                    _dating_del_indices.append(_i)
+        if _dating_del_indices:
+            st.session_state.dating_pasted_images = [
+                v for idx, v in enumerate(st.session_state.dating_pasted_images) if idx not in _dating_del_indices
+            ]
+            st.rerun()
+        if len(st.session_state.dating_pasted_images) > 1:
+            if st.button(t("paste_image_clear_all", lang), key="dating_paste_clear_all"):
+                st.session_state.dating_pasted_images = []
+                st.rerun()
+
+    for _pname, _puri in st.session_state.dating_pasted_images:
+        all_image_data_uris.append((_pname, _puri))
+
     if st.button(t("dating_analyze_button", lang), type="primary", key="dating_analyze_btn"):
         if not api_key:
             st.warning(t("error_no_key", lang))
             return
-        if not scene_dialogue or not scene_dialogue.strip():
-            st.warning(t("dating_no_scene", lang))
+        has_dialogue = bool(scene_dialogue and scene_dialogue.strip())
+        has_attachments = bool(all_image_data_uris or all_file_texts)
+        if not has_dialogue and not has_attachments:
+            st.warning(t("dating_no_input", lang))
             return
 
         provider = _make_provider(api_key, model, base_url, is_native_gemini)
         system_prompt = _DATING_SYSTEM_PROMPT_ZH if lang == "zh" else _DATING_SYSTEM_PROMPT_EN
-        user_prompt = _build_dating_user_prompt(user_gender, chat_stage, scene_dialogue.strip(), lang)
+        user_prompt = _build_dating_user_prompt(
+            user_gender, chat_stage, scene_dialogue.strip() if has_dialogue else "", lang
+        )
 
         with st.spinner(t("dating_thinking", lang)):
             try:
-                result = provider.complete_text(system_prompt, user_prompt)
+                if all_image_data_uris:
+                    parts: list[dict] = []
+                    for _fname, _data_uri in all_image_data_uris:
+                        parts.append({"type": "image_url", "image_url": {"url": _data_uri}})
+                    if all_file_texts:
+                        user_prompt = "\n\n---\n\n".join(all_file_texts) + "\n\n---\n\n" + user_prompt
+                    parts.append({"type": "text", "text": user_prompt})
+                    api_messages = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": parts},
+                    ]
+                    result = provider.complete_chat_with_vision(api_messages)
+                else:
+                    if all_file_texts:
+                        user_prompt = "\n\n---\n\n".join(all_file_texts) + "\n\n---\n\n" + user_prompt
+                    result = provider.complete_text(system_prompt, user_prompt)
             except ProviderError as exc:
                 error_code = str(exc)
                 if "QUOTA_EXCEEDED" in error_code:
@@ -2172,10 +2261,11 @@ def page_dating_chat(lang: str, api_key: str, model: str, base_url: str, provide
         st.markdown(result)
         _do_tts(result, lang, btn_key="tts_dating_result")
         db.save_dating_chat_record(
-            user_gender, chat_stage, scene_dialogue.strip(), result, lang,
+            user_gender, chat_stage, scene_dialogue.strip() if has_dialogue else "", result, lang,
             provider_name=provider_name, model_name=model,
         )
         st.toast(t("saved", lang))
+        st.session_state.dating_pasted_images = []
 
 
 # ---------------------------------------------------------------------------
