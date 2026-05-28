@@ -138,3 +138,26 @@ def get_user_prompt(text: str, language: str = "zh") -> str:
     """Return the user prompt with the text inserted."""
     template = _USER_PROMPT_ZH if language == "zh" else _USER_PROMPT_EN
     return template.format(text=text)
+
+
+# ---------------------------------------------------------------------------
+# Translation prompts
+# ---------------------------------------------------------------------------
+
+_TRANSLATE_TO_ZH_PROMPT = """\
+你是一名专业翻译。请将用户提供的英文文本忠实、流畅地翻译成中文。
+只输出译文，不要添加任何解释或额外内容。
+"""
+
+_TRANSLATE_TO_EN_PROMPT = """\
+You are a professional translator. Faithfully and fluently translate the Chinese text provided by the user into English.
+Output only the translation, without any explanation or extra content.
+"""
+
+
+def get_translate_prompt(target_lang: str) -> str:
+    """Return the system prompt for translation.
+
+    target_lang: 'zh' → translate to Chinese; 'en' → translate to English.
+    """
+    return _TRANSLATE_TO_ZH_PROMPT if target_lang == "zh" else _TRANSLATE_TO_EN_PROMPT

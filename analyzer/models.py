@@ -113,3 +113,15 @@ class DatingChatRecord(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
+class TranslateRecord(BaseModel):
+    """A persisted translation record (maps to SQLite row)."""
+    model_config = ConfigDict(protected_namespaces=())
+
+    id: int | None = None
+    input_text: str = ""
+    result: str = ""
+    source_lang: str = ""   # "zh" | "en"
+    target_lang: str = ""   # "en" | "zh"
+    provider_name: str = ""
+    model_name: str = ""
+    created_at: datetime = Field(default_factory=datetime.now)
