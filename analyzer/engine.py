@@ -4,15 +4,30 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
 from .models import AnalysisResult
-from .prompts import get_system_prompt, get_user_prompt
+from .prompts import get_system_prompt, get_user_prompt, get_translate_prompt
 from .providers import BaseProvider
 from .providers.openai_provider import ProviderError
 
 logger = logging.getLogger(__name__)
+
+
+def detect_language(text: str) -> str:
+    """Detect whether text is predominantly Chinese or English.
+
+    Returns 'zh' if Chinese characters make up >15% of non-whitespace chars,
+    otherwise returns 'en'.
+    """
+    non_ws = re.sub(r"\s", "", text)
+    if not non_ws:
+        return "zh"
+    chinese_chars = re.findall(r"[\u4e00-\u9fff\u3400-\u4dbf]", non_ws)
+    ratio = len(chinese_chars) / len(non_ws)
+    return "zh" if ratio > 0.15 else "en"
 
 
 class ThinkerEngine:
@@ -85,3 +100,16 @@ class ThinkerEngine:
             if text.endswith("```"):
                 text = text[: -3].rstrip()
         return json.loads(text)
+
+    # ------------------------------------------------------------------
+    def translate(self, text: str) -> tuple[str, str, str]:
+        """Detect language and translate the text.
+
+        Returns (translated_text, source_lang, target_lang).
+        Chinese → English, English → Chinese.
+        """
+        source_lang = detect_language(text)
+        target_lang = "en" if source_lang == "zh" else "zh"
+        system_prompt = get_translate_prompt(target_lang)
+        raw = self.provider.complete_text(system_prompt, text)
+        return raw.strip(), source_lang, target_lang

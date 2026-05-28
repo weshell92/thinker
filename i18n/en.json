@@ -159,5 +159,16 @@
   "dating_no_scene": "⚠️ Please enter the scene dialogue.",
   "dating_result_title": "💡 Suggested Replies",
   "dating_history_title": "💬 Chat Assistant History",
-  "dating_back": "↩️ Back"
+  "dating_back": "↩️ Back",
+  "tab_translate": "🌐 Translate",
+  "translate_title": "🌐 Translate",
+  "translate_subtitle": "Auto-detects language: Chinese→English or English→Chinese",
+  "translate_input_placeholder": "Enter text to translate…",
+  "translate_button": "🌐 Translate",
+  "translate_translating": "Translating…",
+  "translate_no_text": "⚠️ Please enter text to translate.",
+  "translate_result_title": "📄 Translation Result",
+  "translate_detected_zh": "🔍 Detected Chinese → Translating to English",
+  "translate_detected_en": "🔍 Detected English → Translating to Chinese",
+  "translate_history_title": "🌐 Translation History"
 }
