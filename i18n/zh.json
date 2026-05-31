@@ -198,4 +198,16 @@
   "qa_placeholder_practice": "例如：如何把这本书转化成可执行动作、日常训练和检查清单？",
   "qa_placeholder_advanced": "例如：建立思维地图、设计7天训练计划",
   "qa_placeholder_cheat": "例如：把全书压缩成核心问题、底层假设、关键模型和现实应用"
+  "dating_back": "↩️ 返回",
+  "tab_translate": "🌐 翻译",
+  "translate_title": "🌐 翻译",
+  "translate_subtitle": "自动检测语言：中文→英文，英文→中文",
+  "translate_input_placeholder": "请输入要翻译的文本…",
+  "translate_button": "🌐 翻译",
+  "translate_translating": "正在翻译…",
+  "translate_no_text": "⚠️ 请输入要翻译的文本。",
+  "translate_result_title": "📄 翻译结果",
+  "translate_detected_zh": "🔍 检测到中文 → 翻译成英文",
+  "translate_detected_en": "🔍 检测到英文 → 翻译成中文",
+  "translate_history_title": "🌐 翻译记录"
 }

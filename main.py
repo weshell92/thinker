@@ -25,7 +25,8 @@ if _PROJECT_ROOT not in sys.path:
 
 import config  # noqa: E402
 from analyzer.engine import ThinkerEngine  # noqa: E402
-from analyzer.models import AnalysisResult, DatingChatRecord  # noqa: E402
+from analyzer.models import AnalysisResult, DatingChatRecord, TranslateRecord  # noqa: E402
+from analyzer.engine import detect_language  # noqa: E402
 from analyzer.providers.openai_provider import OpenAIProvider, ProviderError  # noqa: E402
 from analyzer.providers.gemini_native_provider import GeminiNativeProvider  # noqa: E402
 from book.reader import (  # noqa: E402
@@ -1937,6 +1938,93 @@ def page_write(lang: str, api_key: str, model: str, base_url: str, provider_name
 
 
 # ---------------------------------------------------------------------------
+# Tab: Translation
+# ---------------------------------------------------------------------------
+
+def page_translate(lang: str, api_key: str, model: str, base_url: str, provider_name: str = "", is_native_gemini: bool = False) -> None:
+    """Render the Translation page with auto language detection."""
+    st.header(t("translate_title", lang))
+    st.caption(t("translate_subtitle", lang))
+
+    db = get_db()
+
+    # ---- View saved record ----
+    if st.session_state.get("view_translate_record_id") is not None:
+        rec = db.get_translate_record_by_id(st.session_state.view_translate_record_id)
+        if rec:
+            st.info(f"📄 {rec.input_text[:200]}")
+            direction_key = "translate_detected_zh" if rec.source_lang == "zh" else "translate_detected_en"
+            st.caption(t(direction_key, lang))
+            st.markdown(f"**{t('translate_result_title', lang)}**")
+            st.text_area("", value=rec.result, height=300, disabled=True, key=f"translate_view_{rec.id}")
+            _do_tts(rec.result, lang, btn_key=f"tts_translate_saved_{rec.id}")
+            if st.button("↩️ Back / 返回", key="translate_back"):
+                st.session_state.view_translate_record_id = None
+                st.rerun()
+            return
+        else:
+            st.session_state.view_translate_record_id = None
+
+    # ---- Input ----
+    input_text = st.text_area(
+        t("translate_input_placeholder", lang),
+        height=200,
+        key="translate_input_text",
+    )
+
+    # Real-time language detection hint
+    if input_text and input_text.strip():
+        src = detect_language(input_text.strip())
+        hint_key = "translate_detected_zh" if src == "zh" else "translate_detected_en"
+        st.caption(t(hint_key, lang))
+
+    if st.button(t("translate_button", lang), type="primary"):
+        if not api_key:
+            st.warning(t("error_no_key", lang))
+            return
+        if not input_text or not input_text.strip():
+            st.warning(t("translate_no_text", lang))
+            return
+
+        provider = _make_provider(api_key, model, base_url, is_native_gemini)
+        engine = ThinkerEngine(provider)
+
+        with st.spinner(t("translate_translating", lang)):
+            try:
+                translated, source_lang, target_lang = engine.translate(input_text.strip())
+            except ProviderError as exc:
+                error_code = str(exc)
+                if "QUOTA_EXCEEDED" in error_code:
+                    st.error(t("error_quota", lang, provider=provider_name))
+                elif "AUTH_ERROR" in error_code:
+                    st.error(t("error_auth", lang))
+                elif "CONTEXT_TOO_LONG" in error_code:
+                    st.error(t("error_context_too_long", lang))
+                elif "TIMEOUT" in error_code:
+                    st.warning(t("error_timeout", lang))
+                elif "RATE_LIMIT" in error_code:
+                    st.warning(t("error_rate_limit", lang))
+                else:
+                    st.error(t("error_analysis", lang, error=error_code))
+                return
+            except Exception as exc:
+                st.error(t("error_analysis", lang, error=str(exc)))
+                return
+
+        direction_key = "translate_detected_zh" if source_lang == "zh" else "translate_detected_en"
+        st.caption(t(direction_key, lang))
+        st.markdown(f"**{t('translate_result_title', lang)}**")
+        st.text_area("", value=translated, height=300, key="translate_result_output")
+        _do_tts(translated, lang, btn_key="tts_translate_result")
+
+        db.save_translate_record(
+            input_text.strip(), translated, source_lang, target_lang,
+            provider_name=provider_name, model_name=model,
+        )
+        st.toast(t("saved", lang))
+
+
+# ---------------------------------------------------------------------------
 # Tab 7: Text-to-Speech (standalone input)
 # ---------------------------------------------------------------------------
 
@@ -2571,6 +2659,7 @@ def main() -> None:
             "tab_tts": t("tab_tts", lang),
             "tab_write": t("tab_write", lang),
             "tab_dating_chat": t("tab_dating_chat", lang),
+            "tab_translate": t("tab_translate", lang),
         }
         with st.expander(t("tab_visibility_label", lang), expanded=False):
             st.caption(t("tab_visibility_help", lang))
@@ -2705,6 +2794,25 @@ def main() -> None:
                             db.delete_dating_chat_record(d_rec.id)  # type: ignore[arg-type]
                             st.rerun()
 
+        # ---- Translation History ----
+        st.subheader(t("translate_history_title", lang))
+        translate_records = db.get_all_translate_records(limit=30)
+        if not translate_records:
+            st.caption(t("history_empty", lang))
+        else:
+            with st.expander(f"🌐 {t('translate_history_title', lang)} ({len(translate_records)})", expanded=False):
+                for tr_rec in translate_records:
+                    tr_label = tr_rec.input_text[:35] + ("…" if len(tr_rec.input_text) > 35 else "")
+                    col_tr_btn, col_tr_del = st.columns([4, 1])
+                    with col_tr_btn:
+                        _pm = f" [{tr_rec.provider_name}/{tr_rec.model_name}]" if tr_rec.model_name else ""
+                        if st.button(f"🌐 {tr_label}{_pm}", key=f"view_translate_{tr_rec.id}"):
+                            st.session_state.view_translate_record_id = tr_rec.id
+                    with col_tr_del:
+                        if st.button("🗑️", key=f"del_translate_{tr_rec.id}"):
+                            db.delete_translate_record(tr_rec.id)  # type: ignore[arg-type]
+                            st.rerun()
+
     # =================================================================
     # Main area – Tabs (filtered by visibility settings)
     # =================================================================
@@ -2712,7 +2820,7 @@ def main() -> None:
     st.caption(t("app_subtitle", lang))
 
     _is_native_gemini = bool(preset_cfg.get("native_gemini"))
-    _visible = st.session_state.get("_visible_tabs", ["tab_analyze", "tab_read", "tab_qa", "tab_gateway", "tab_chat", "tab_tts", "tab_write", "tab_dating_chat"])
+    _visible = st.session_state.get("_visible_tabs", ["tab_analyze", "tab_read", "tab_qa", "tab_gateway", "tab_chat", "tab_tts", "tab_write", "tab_dating_chat", "tab_translate"])
 
     # Build tab labels and keys for visible tabs only
     _TAB_REGISTRY = [
@@ -2724,6 +2832,7 @@ def main() -> None:
         ("tab_tts", t("tab_tts", lang)),
         ("tab_write", t("tab_write", lang)),
         ("tab_dating_chat", t("tab_dating_chat", lang)),
+        ("tab_translate", t("tab_translate", lang)),
     ]
     _shown = [(k, lbl) for k, lbl in _TAB_REGISTRY if k in _visible]
     if not _shown:
@@ -2763,6 +2872,10 @@ def main() -> None:
     if "tab_dating_chat" in _tab_map:
         with _tab_map["tab_dating_chat"]:
             page_dating_chat(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
+
+    if "tab_translate" in _tab_map:
+        with _tab_map["tab_translate"]:
+            page_translate(lang, api_key, model, base_url, provider_name=preset, is_native_gemini=_is_native_gemini)
 
 
 if __name__ == "__main__":
