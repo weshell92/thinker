@@ -9,7 +9,15 @@ OPENAI_BASE_URL: str | None = os.environ.get("OPENAI_BASE_URL", None)
 DEFAULT_LANGUAGE: str = "zh"  # "zh" | "en"
 
 # --- Database ---
-DB_PATH: str = os.path.join(os.path.dirname(__file__), "db", "thinker.db")
+# On Streamlit Cloud the source directory is read-only, so fall back to /tmp
+# which is always writable.  Local development uses the in-repo path so that
+# the DB file is preserved across restarts.
+_default_db_path: str = os.path.join(os.path.dirname(__file__), "db", "thinker.db")
+DB_PATH: str = (
+    _default_db_path
+    if os.access(os.path.dirname(_default_db_path), os.W_OK)
+    else os.path.join("/tmp", "thinker.db")
+)
 
 # --- Book PDF directory ---
 BOOK_DIR: str = os.path.join(os.path.dirname(__file__), "book")
