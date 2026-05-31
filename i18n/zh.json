@@ -197,8 +197,7 @@
   "qa_placeholder_critical": "例如：寻找作者最大的逻辑漏洞、幸存者偏差、时代局限",
   "qa_placeholder_practice": "例如：如何把这本书转化成可执行动作、日常训练和检查清单？",
   "qa_placeholder_advanced": "例如：建立思维地图、设计7天训练计划",
-  "qa_placeholder_cheat": "例如：把全书压缩成核心问题、底层假设、关键模型和现实应用"
-  "dating_back": "↩️ 返回",
+  "qa_placeholder_cheat": "例如：把全书压缩成核心问题、底层假设、关键模型和现实应用",
   "tab_translate": "🌐 翻译",
   "translate_title": "🌐 翻译",
   "translate_subtitle": "自动检测语言：中文→英文，英文→中文",
