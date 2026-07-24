@@ -1093,47 +1093,16 @@ def main() -> None:
 
         # ---- Provider presets ----
         _PRESETS = {
-            "OpenAI": {
-                "base_url": "",
-                "models": ["gpt-5.4","gpt-5.3","gpt-5.2","gpt-5.1","gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
-            },
-            "DeepSeek": {
-                "base_url": "https://api.deepseek.com/v1",
-                "models": ["deepseek-chat", "deepseek-reasoner"],
-            },
-            "Zhipu (智谱)": {
-                "base_url": "https://open.bigmodel.cn/api/paas/v4",
-                "models": ["glm-4-flash", "GLM-4-Plus", "GLM-4", "GLM-4-Air", "GLM-4-Long", "GLM-4-FlashX", "GLM-4-AirX"],
-            },
+
             "Google Gemini": {
                 "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-                "models": ["gemini-pro-latest","gemini-flash-latest","gemini-3.1-pro-preview","gemini-3.1-flash-lite","gemini-3-flash-live","gemini-3-flash-preview", "gemini-2.5-pro","gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite",  "gemma-4-31b-it", "gemini-embedding-2-preview"],
+                "models": ["gemini-3.1-flash-lite-preview"],
             },
             "Gemini中转 (Native)": {
                 "base_url": "https://gemini-balance-lite-dxsq9gzm0cf3.weshell92.deno.net",
-                "models": ["gemini-pro-latest","gemini-flash-latest","gemini-3.1-pro-preview","gemini-3.1-flash-lite","gemini-3-flash-live","gemini-3-flash-preview","gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro", "gemma-4-31b-it", "gemini-embedding-2-preview"],
+                "models": ["gemini-3.1-flash-lite-preview", "gemma-4-31b-it"],
                 "native_gemini": True,
-            },
-            "Kimi (月之暗面)": {
-                "base_url": "https://api.moonshot.cn/v1",
-                "models": ["kimi-k2.5","kimi-k2-thinking","kimi-k2-0905","kimi-k2", "moonshot-v1-128k", "moonshot-v1-32k", "moonshot-v1-8k"],
-            },
-            "Qwen (通义千问)": {
-                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                "models": ["qwen3.6-plus","qwen-max", "qwen-plus", "qwen-turbo", "qwen-long", "qwen-vl-max", "qwen-vl-plus", "qwen3-235b-a22b", "qwen3-32b", "qwen3-14b", "qwen3-8b", "qwen2.5-72b-instruct", "qwen2.5-32b-instruct"],
-            },
-            "Groq": {
-                "base_url": "https://api.groq.com/openai/v1",
-                "models": ["mixtral-8x7b-32768","llama3-70b-8192", "openai/gpt-oss-120b","llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview", "gemma2-9b-it", "qwen-qwq-32b"],
-            },
-            "Ollama (local)": {
-                "base_url": "http://localhost:11434/v1",
-                "models": ["llama3", "llama3.1", "llama3.2", "qwen2.5", "deepseek-r1", "mistral", "phi3"],
-            },
-            t("custom_provider", lang): {
-                "base_url": "",
-                "models": [],
-            },
+            }
         }
         _PRESET_NAMES = list(_PRESETS.keys())
 
